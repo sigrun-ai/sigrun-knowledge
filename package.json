@@ -36,6 +36,7 @@
 		"@sigrun/sigrun": "file:../sigrun",
 		"@types/node": "^26.6.4",
 		"tsx": "^4.23.15",
+		"typebox": "1.3.27",
 		"typescript": "^7.0.2",
 		"vitest": "^5.0.3"
 	},

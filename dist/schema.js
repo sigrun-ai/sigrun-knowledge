@@ -102,8 +102,15 @@ export function validateValue(def, value) {
             return "expected a list";
         const itemType = def.item ?? "string";
         for (const item of value) {
-            // Enum items validate as plain strings here; membership lives on
-            // the owning def's values, which a list item def does not carry.
+            // List-of-enum: membership comes from the owning def's values
+            // (the item type carries no values of its own); permissive only
+            // when no values are declared.
+            if (itemType === "enum" && def.values !== undefined) {
+                if (typeof item !== "string" || !def.values.includes(item)) {
+                    return `list item: expected one of: ${def.values.join(", ")}`;
+                }
+                continue;
+            }
             const error = checkScalar(itemType === "enum" ? "string" : itemType, item);
             if (error !== undefined)
                 return `list item: ${error}`;

@@ -16,7 +16,18 @@ const DEFAULT_RESEARCH_TOOLS: readonly string[] = [
 ];
 
 function warnInvalid(setting: string): void {
+	// Warn once per setting name: Task 10 resolves settings per tool call,
+	// so a misconfigured user must not spam the log on every call.
+	if (warned.has(setting)) return;
+	warned.add(setting);
 	console.warn(`knowledge: invalid ${setting} setting; using its default`);
+}
+
+const warned = new Set<string>();
+
+/** Test hook: clear the warn-once registry between tests. */
+export function resetWarnedForTests(): void {
+	warned.clear();
 }
 
 /**

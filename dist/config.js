@@ -7,7 +7,17 @@ const DEFAULT_RESEARCH_TOOLS = [
     "web_fetch",
 ];
 function warnInvalid(setting) {
+    // Warn once per setting name: Task 10 resolves settings per tool call,
+    // so a misconfigured user must not spam the log on every call.
+    if (warned.has(setting))
+        return;
+    warned.add(setting);
     console.warn(`knowledge: invalid ${setting} setting; using its default`);
+}
+const warned = new Set();
+/** Test hook: clear the warn-once registry between tests. */
+export function resetWarnedForTests() {
+    warned.clear();
 }
 /**
  * Match a tool name against a glob where `*` is the only wildcard and

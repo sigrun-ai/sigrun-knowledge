@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { KnowledgeDb } from "../src/db.js";
 import type { FieldDef } from "../src/schema.js";
-import { validateValue } from "../src/schema.js";
+import { TypeDefSchema, validateValue } from "../src/schema.js";
 
 describe("KnowledgeDb", () => {
 	let dir: string;
@@ -149,5 +149,34 @@ describe("validateValue", () => {
 		expect(validateValue(listDef, ["alice", "bob"])).toBeUndefined();
 		expect(validateValue(listDef, ["alice", 7])).toMatch(/item/);
 		expect(validateValue(listDef, "alice")).toMatch(/list/);
+	});
+
+	it("validates list-of-enum membership against the def's values", () => {
+		const listDef = def({
+			type: "list",
+			item: "enum",
+			values: ["a", "b"],
+		});
+		expect(validateValue(listDef, ["a", "b"])).toBeUndefined();
+		expect(validateValue(listDef, ["a", "zzz"])).toBe(
+			"list item: expected one of: a, b",
+		);
+		// Permissive only when no values are declared.
+		expect(
+			validateValue(def({ type: "list", item: "enum" }), ["anything"]),
+		).toBeUndefined();
+	});
+});
+
+describe("TypeDefSchema", () => {
+	it("rejects a type name violating the lowercase phrase pattern", async () => {
+		const { Value } = await import("typebox/value");
+		const base = {
+			name: "clinic",
+			description: "a vet clinic",
+			fields: [],
+		};
+		expect(Value.Check(TypeDefSchema, base)).toBe(true);
+		expect(Value.Check(TypeDefSchema, { ...base, name: "Clinic" })).toBe(false);
 	});
 });

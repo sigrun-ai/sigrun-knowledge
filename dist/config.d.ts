@@ -4,6 +4,8 @@ export interface SettingsReader {
 export interface UserKnowledgeSettings {
     researchTools: readonly string[];
 }
+/** Test hook: clear the warn-once registry between tests. */
+export declare function resetWarnedForTests(): void;
 /**
  * Match a tool name against a glob where `*` is the only wildcard and
  * matches any run of characters (including none). Everything else in the
