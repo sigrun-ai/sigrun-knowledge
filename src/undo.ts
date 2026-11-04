@@ -209,6 +209,10 @@ function afterDiffersFromRow(
 ): string | null {
 	if (after === null) return "changed by a later change";
 	for (const column of columns) {
+		// Absent key = the version blob doesn't carry that column (partial
+		// blobs, e.g. inquiry updates store only conversations/outcome);
+		// undefined can only mean missing — a stored null is "null".
+		if (after[column] === undefined) continue;
 		if (JSON.stringify(after[column]) !== JSON.stringify(row[column])) {
 			return `${column} changed by a later change`;
 		}

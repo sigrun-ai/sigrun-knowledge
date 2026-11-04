@@ -241,6 +241,40 @@ describe("undoChange", () => {
 		expect(role.reason).toBe("close and cheap");
 	});
 
+	it("undo of a change that set an inquiry outcome restores it", () => {
+		const database = open();
+		applyRecord(
+			database,
+			{
+				inquiry: { question: "Biscuit's knee" },
+				types: [clinicType],
+				entities: [clinic("Northside Vet", "555-0100", 120)],
+			},
+			ctx("call-create"),
+		);
+		const outcomeChange = applyRecord(
+			database,
+			{
+				inquiry: {
+					question: "Biscuit's knee",
+					outcome: { status: "decided", what: "Northside Vet" },
+				},
+				types: [clinicType],
+				entities: [clinic("Northside Vet", "555-0100", 120)],
+			},
+			ctx("call-outcome"),
+		);
+		expect(outcomeChange.errors).toEqual([]);
+		const undo = undoChange(database, outcomeChange.changeId, LATER);
+		expect(undo.restored).toBeGreaterThan(0);
+		expect(undo.skipped.filter((line) => line.includes("inquiry"))).toEqual([]);
+		const row = database
+			.raw()
+			.prepare("SELECT outcome FROM inquiries WHERE question = ?")
+			.get("Biscuit's knee") as { outcome: string | null };
+		expect(row.outcome).toBeNull();
+	});
+
 	it("undo of a change that only added a role removes that role", () => {
 		const database = open();
 		applyRecord(
