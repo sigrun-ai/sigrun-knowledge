@@ -137,7 +137,7 @@ function applyValidating(db, input, ctx, errors) {
         for (const def of pending.values()) {
             if (pending.has(def.parent ?? ""))
                 continue;
-            applyTypeDef(db, def, typesByName, typesById, errors);
+            applyTypeDef(db, def, typesByName, typesById, errors, changeId, ctx.now);
             pending.delete(def.name);
             progressed = true;
             if (errors.length > 0)
@@ -151,7 +151,7 @@ function applyValidating(db, input, ctx, errors) {
     }
     if (errors.length > 0)
         return undefined;
-    function applyTypeDef(db, def, typesByName, typesById, errors) {
+    function applyTypeDef(db, def, typesByName, typesById, errors, changeId, now) {
         const existing = typesByName.get(def.name);
         if (existing === undefined) {
             const parentId = def.parent === undefined
@@ -172,6 +172,7 @@ function applyValidating(db, input, ctx, errors) {
             };
             typesByName.set(def.name, stored);
             typesById.set(stored.id, stored);
+            writeVersion(db, changeId, "types", String(stored.id), null, stored, now);
             return;
         }
         // Extending an existing type: every stored field must be present
@@ -195,6 +196,12 @@ function applyValidating(db, input, ctx, errors) {
         if (errors.length > 0)
             return;
         if (merged.length !== existing.fields.length) {
+            const next = {
+                ...existing,
+                fields: merged,
+                version: existing.version + 1,
+            };
+            writeVersion(db, changeId, "types", String(existing.id), existing, next, now);
             db.raw()
                 .prepare("UPDATE types SET fields = ?, version = version + 1 WHERE id = ?")
                 .run(JSON.stringify(merged), existing.id);
@@ -276,7 +283,7 @@ function validateTypeDef(def, errors) {
 function applyInquiry(db, inquiry, ctx, changeId) {
     const existing = db
         .raw()
-        .prepare("SELECT id, conversations, outcome FROM inquiries WHERE question = ?")
+        .prepare("SELECT id, conversations, outcome, archived FROM inquiries WHERE question = ?")
         .get(inquiry.question);
     if (existing === undefined) {
         const conversations = ctx.conversationId === undefined ? [] : [ctx.conversationId];
@@ -286,7 +293,30 @@ function applyInquiry(db, inquiry, ctx, changeId) {
             .run(inquiry.question, inquiry.why ?? null, ctx.now, ctx.now, JSON.stringify(conversations), inquiry.outcome === undefined
             ? null
             : JSON.stringify(inquiry.outcome));
-        return Number(inserted.lastInsertRowid);
+        const stored = {
+            id: Number(inserted.lastInsertRowid),
+            question: inquiry.question,
+            why: inquiry.why ?? null,
+            startedAt: ctx.now,
+            touchedAt: ctx.now,
+            conversations: JSON.stringify(conversations),
+            outcome: inquiry.outcome === undefined
+                ? null
+                : JSON.stringify(inquiry.outcome),
+            archived: 0,
+        };
+        writeVersion(db, changeId, "inquiries", String(stored.id), null, stored, ctx.now);
+        return stored.id;
+    }
+    if (existing.archived !== 0) {
+        // An archived inquiry matching this question is revived by the
+        // record, not duplicated (undo archives; a re-apply unarchives).
+        const revived = { ...existing, archived: 0, touchedAt: ctx.now };
+        writeVersion(db, changeId, "inquiries", String(existing.id), existing, revived, ctx.now);
+        db.raw()
+            .prepare("UPDATE inquiries SET archived = 0, touchedAt = ? WHERE id = ?")
+            .run(ctx.now, existing.id);
+        existing.archived = 0;
     }
     // Existing inquiry: only record a version when something changed.
     const conversations = JSON.parse(existing.conversations);
@@ -364,6 +394,9 @@ function applyEntity(db, input, type, typesById, changeId, now, errors) {
             const normalized = normalizeKey(key, value);
             if (normalized === "")
                 continue;
+            // Deliberate: the key NAME and the normalized value must both
+            // match. `phone:555-0100` and `tel:555-0100` are different
+            // claims and never merge an entity on their own.
             const match = db
                 .raw()
                 .prepare(`SELECT e.id, e.typeId, e.name, e.keys, e.fields, e.attributes, e.cls, e.indexedAt, e.archived

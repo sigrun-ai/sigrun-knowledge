@@ -1,4 +1,10 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** Parse an observedAt as a date-only string or a full ISO timestamp. */
+function parseObserved(observedAt) {
+    const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
+    const parsed = Date.parse(dateOnly.test(observedAt) ? `${observedAt}T00:00:00Z` : observedAt);
+    return Number.isNaN(parsed) ? null : parsed;
+}
 function formatField(value) {
     if (typeof value === "object" &&
         value !== null &&
@@ -32,21 +38,25 @@ export function renderCard(db, entityId, now) {
     for (const [name, field] of Object.entries(fields)) {
         sources.add(field.source);
         const def = typeFields.find((candidate) => candidate.name === name);
-        let observed = `observed ${field.observedAt}`;
-        if (def?.horizonDays !== undefined) {
-            const observedMs = Date.parse(`${field.observedAt}T00:00:00Z`);
-            if (!Number.isNaN(observedMs) &&
-                now - observedMs > def.horizonDays * DAY_MS) {
-                observed += ", stale";
-            }
+        // observedAt may be date-only or a full ISO timestamp: parse both
+        // for staleness, but always render the date part.
+        const observedMs = parseObserved(field.observedAt);
+        const observedDate = observedMs === null
+            ? field.observedAt
+            : new Date(observedMs).toISOString().slice(0, 10);
+        let observed = `observed ${observedDate}`;
+        if (def?.horizonDays !== undefined &&
+            observedMs !== null &&
+            now - observedMs > def.horizonDays * DAY_MS) {
+            observed += ", stale";
         }
         lines.push(`${name}: ${formatField(field.value)} (${observed})`);
     }
     const roles = db
         .raw()
         .prepare(`SELECT i.question AS question, r.role AS role, r.reason AS reason
-			 FROM roles r JOIN inquiries i ON i.id = r.inquiryId
-			 WHERE r.entityId = ? ORDER BY i.question`)
+			FROM roles r JOIN inquiries i ON i.id = r.inquiryId
+			WHERE r.entityId = ? AND i.archived = 0 ORDER BY i.question`)
         .all(entityId);
     for (const role of roles) {
         const reason = role.reason === null ? "" : ` — ${role.reason}`;

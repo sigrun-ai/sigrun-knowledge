@@ -96,6 +96,14 @@ export function undoChange(
 					else if (outcome !== "unchanged") skipped.push(outcome);
 					break;
 				}
+				case "types": {
+					// Type rows are shared schema, not records: their versions
+					// exist for audit, but undo never rewrites schema.
+					skipped.push(
+						`type ${version.rowId}: type schema changes are not reverted`,
+					);
+					break;
+				}
 				case "entity_keys": {
 					const outcome = undoEntityKey(db, version, undoId, now);
 					if (outcome === "restored") restored += 1;
@@ -127,17 +135,21 @@ function undoEntity(
 	if (version.before === null) {
 		// The change created this entity: undo archives it — but only
 		// while the row still equals what the change wrote; a later
-		// change's edits stand.
+		// change's edits (rename, new fields, new keys) stand.
 		if (Number(row.archived) !== 0) return "unchanged";
 		const afterCreate = JSON.parse(version.after ?? "null") as Record<
 			string,
 			unknown
 		> | null;
-		if (
-			afterCreate !== null &&
-			JSON.stringify(afterCreate.fields) !== JSON.stringify(row.fields)
-		) {
-			return `entity "${String(row.name)}" (${version.rowId}): changed by a later change`;
+		const differs = afterDiffersFromRow(afterCreate, row, [
+			"name",
+			"keys",
+			"fields",
+			"attributes",
+			"typeId",
+		]);
+		if (differs !== null) {
+			return `entity "${String(row.name)}" (${version.rowId}): ${differs}`;
 		}
 		writeVersion(db, undoId, "entities", version.rowId, row, { ...row, archived: 1 }, now);
 		db.raw()
@@ -154,12 +166,18 @@ function undoEntity(
 		string,
 		unknown
 		> | null;
-	if (
-		before === null ||
-		after === null ||
-		JSON.stringify(after.fields) !== JSON.stringify(row.fields)
-	) {
-		return `entity "${String(row.name)}" (${version.rowId}): fields changed by a later change`;
+	// Whole-row equality: a later change touching anything the change
+	// wrote (name, keys, attributes, type — not just fields) blocks the
+	// undo, so undoing A can never silently revert B's rename.
+	const differs = afterDiffersFromRow(after, row, [
+		"name",
+		"keys",
+		"fields",
+		"attributes",
+		"typeId",
+	]);
+	if (before === null || after === null || differs !== null) {
+		return `entity "${String(row.name)}" (${version.rowId}): ${differs ?? "changed by a later change"}`;
 	}
 	const restoredRow = { ...row, ...before, id: row.id, archived: row.archived } as Record<string, unknown>;
 	writeVersion(db, undoId, "entities", version.rowId, row, restoredRow, now);
@@ -177,6 +195,25 @@ function undoEntity(
 			version.rowId,
 		);
 	return "restored";
+}
+
+/**
+ * JSON-stable compare of a version's `after` against the current row for
+ * the given columns. Returns null when equal, otherwise a short text
+ * naming the first differing column.
+ */
+function afterDiffersFromRow(
+	after: Record<string, unknown> | null,
+	row: Record<string, unknown>,
+	columns: readonly string[],
+): string | null {
+	if (after === null) return "changed by a later change";
+	for (const column of columns) {
+		if (JSON.stringify(after[column]) !== JSON.stringify(row[column])) {
+			return `${column} changed by a later change`;
+		}
+	}
+	return null;
 }
 
 function undoRole(
@@ -197,8 +234,9 @@ function undoRole(
 			string,
 			unknown
 		> | null;
-		if (after !== null && JSON.stringify(after.role) !== JSON.stringify(row.role)) {
-			return `role ${version.rowId}: changed by a later change`;
+		const differs = afterDiffersFromRow(after, row, ["role", "reason"]);
+		if (differs !== null) {
+			return `role ${version.rowId}: ${differs}`;
 		}
 		writeVersion(db, undoId, "roles", version.rowId, row, null, now);
 		db.raw().prepare("DELETE FROM roles WHERE id = ?").run(Number(version.rowId));
@@ -213,12 +251,9 @@ function undoRole(
 		string,
 		unknown
 		> | null;
-	if (
-		before === null ||
-		after === null ||
-		JSON.stringify(after.role) !== JSON.stringify(row.role)
-	) {
-		return `role ${version.rowId}: changed by a later change`;
+	const differs = afterDiffersFromRow(after, row, ["role", "reason"]);
+	if (before === null || after === null || differs !== null) {
+		return `role ${version.rowId}: ${differs ?? "changed by a later change"}`;
 	}
 	writeVersion(db, undoId, "roles", version.rowId, row, { ...row, ...before, id: row.id }, now);
 	db.raw()
@@ -236,10 +271,35 @@ function undoInquiry(
 	const row = db
 		.raw()
 		.prepare(
-			"SELECT id, question, why, startedAt, touchedAt, conversations, outcome FROM inquiries WHERE id = ?",
+			"SELECT id, question, why, startedAt, touchedAt, conversations, outcome, archived FROM inquiries WHERE id = ?",
 		)
 		.get(Number(version.rowId)) as Record<string, unknown> | undefined;
-	if (row === undefined || version.before === null) return "unchanged";
+	if (row === undefined) return "unchanged";
+
+	if (version.before === null) {
+		// The change created this inquiry: undo archives it (records are
+		// never deleted). Only while the row still equals what the change
+		// wrote.
+		if (Number(row.archived) !== 0) return "unchanged";
+		const after = JSON.parse(version.after ?? "null") as Record<
+			string,
+			unknown
+		> | null;
+		const differs = afterDiffersFromRow(after, row, [
+			"question",
+			"why",
+			"outcome",
+			"conversations",
+		]);
+		if (differs !== null) {
+			return `inquiry "${String(row.question)}" (${version.rowId}): ${differs}`;
+		}
+		writeVersion(db, undoId, "inquiries", version.rowId, row, { ...row, archived: 1 }, now);
+		db.raw()
+			.prepare("UPDATE inquiries SET archived = 1, touchedAt = ? WHERE id = ?")
+			.run(now, Number(version.rowId));
+		return "restored";
+	}
 
 	const before = JSON.parse(version.before ?? "null") as Record<
 		string,
@@ -249,21 +309,25 @@ function undoInquiry(
 		string,
 		unknown
 		> | null;
-	if (
-		before === null ||
-		after === null ||
-		JSON.stringify(after.outcome) !== JSON.stringify(row.outcome)
-	) {
-		return `inquiry "${String(row.question)}" (${version.rowId}): outcome changed by a later change`;
+	const differs = afterDiffersFromRow(after, row, [
+		"question",
+		"why",
+		"outcome",
+		"conversations",
+	]);
+	if (before === null || after === null || differs !== null) {
+		return `inquiry "${String(row.question)}" (${version.rowId}): ${differs ?? "changed by a later change"}`;
 	}
-	writeVersion(db, undoId, "inquiries", version.rowId, row, { ...row, ...before, id: row.id }, now);
+	const restored = { ...row, ...before, id: row.id } as Record<string, unknown>;
+	writeVersion(db, undoId, "inquiries", version.rowId, row, restored, now);
 	db.raw()
 		.prepare(
-			"UPDATE inquiries SET conversations = ?, outcome = ?, touchedAt = ? WHERE id = ?",
+			"UPDATE inquiries SET conversations = ?, outcome = ?, archived = ?, touchedAt = ? WHERE id = ?",
 		)
 		.run(
-			before.conversations as string,
-			(before.outcome as string | null) ?? null,
+			restored.conversations as string,
+			(restored.outcome as string | null) ?? null,
+			Number(restored.archived ?? 0),
 			now,
 			Number(version.rowId),
 		);

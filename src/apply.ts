@@ -253,7 +253,7 @@ function applyValidating(
 		let progressed = false;
 		for (const def of pending.values()) {
 			if (pending.has(def.parent ?? "")) continue;
-			applyTypeDef(db, def, typesByName, typesById, errors);
+			applyTypeDef(db, def, typesByName, typesById, errors, changeId, ctx.now);
 			pending.delete(def.name);
 			progressed = true;
 			if (errors.length > 0) break;
@@ -271,6 +271,8 @@ function applyValidating(
 		typesByName: Map<string, StoredType>,
 		typesById: Map<number, StoredType>,
 		errors: string[],
+		changeId: string,
+		now: number,
 	): void {
 		const existing = typesByName.get(def.name);
 		if (existing === undefined) {
@@ -295,6 +297,7 @@ function applyValidating(
 			};
 			typesByName.set(def.name, stored);
 			typesById.set(stored.id, stored);
+			writeVersion(db, changeId, "types", String(stored.id), null, stored, now);
 			return;
 		}
 		// Extending an existing type: every stored field must be present
@@ -320,6 +323,12 @@ function applyValidating(
 		}
 		if (errors.length > 0) return;
 		if (merged.length !== existing.fields.length) {
+			const next: StoredType = {
+				...existing,
+				fields: merged,
+				version: existing.version + 1,
+			};
+			writeVersion(db, changeId, "types", String(existing.id), existing, next, now);
 			db.raw()
 				.prepare(
 					"UPDATE types SET fields = ?, version = version + 1 WHERE id = ?",
@@ -442,10 +451,15 @@ function applyInquiry(
 	const existing = db
 		.raw()
 		.prepare(
-			"SELECT id, conversations, outcome FROM inquiries WHERE question = ?",
+			"SELECT id, conversations, outcome, archived FROM inquiries WHERE question = ?",
 		)
 		.get(inquiry.question) as
-		| { id: number; conversations: string; outcome: string | null }
+		| {
+				id: number;
+				conversations: string;
+				outcome: string | null;
+				archived: number;
+			}
 		| undefined;
 	if (existing === undefined) {
 		const conversations =
@@ -465,7 +479,31 @@ function applyInquiry(
 					? null
 					: JSON.stringify(inquiry.outcome),
 			);
-		return Number(inserted.lastInsertRowid);
+		const stored = {
+			id: Number(inserted.lastInsertRowid),
+			question: inquiry.question,
+			why: inquiry.why ?? null,
+			startedAt: ctx.now,
+			touchedAt: ctx.now,
+			conversations: JSON.stringify(conversations),
+			outcome:
+				inquiry.outcome === undefined
+					? null
+					: JSON.stringify(inquiry.outcome),
+			archived: 0,
+		};
+		writeVersion(db, changeId, "inquiries", String(stored.id), null, stored, ctx.now);
+		return stored.id;
+	}
+	if (existing.archived !== 0) {
+		// An archived inquiry matching this question is revived by the
+		// record, not duplicated (undo archives; a re-apply unarchives).
+		const revived = { ...existing, archived: 0, touchedAt: ctx.now };
+		writeVersion(db, changeId, "inquiries", String(existing.id), existing, revived, ctx.now);
+		db.raw()
+			.prepare("UPDATE inquiries SET archived = 0, touchedAt = ? WHERE id = ?")
+			.run(ctx.now, existing.id);
+		existing.archived = 0;
 	}
 
 	// Existing inquiry: only record a version when something changed.
@@ -604,6 +642,9 @@ function applyEntity(
 		for (const [key, value] of Object.entries(input.keys)) {
 			const normalized = normalizeKey(key, value);
 			if (normalized === "") continue;
+			// Deliberate: the key NAME and the normalized value must both
+			// match. `phone:555-0100` and `tel:555-0100` are different
+			// claims and never merge an entity on their own.
 			const match = db
 				.raw()
 				.prepare(

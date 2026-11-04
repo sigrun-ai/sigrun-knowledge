@@ -98,4 +98,17 @@ describe("renderCard", () => {
 		// The notes field was observed recently: no stale mark.
 		expect(card.text).toMatch(/notes:.*\(observed 2026-10-30\)/);
 	});
+
+	it("tolerates full ISO timestamps in observedAt: staleness works and the date part renders", () => {
+		const database = open();
+		const input = clinic("Northside Vet", "555-0100", 120);
+		input.fields.price.observedAt = "2026-09-15T09:30:00Z";
+		const result = applyRecord(
+			database,
+			{ types: [clinicType], entities: [input] },
+			ctx("call-ts"),
+		);
+		const card = renderCard(database, result.touched[0], NOW);
+		expect(card.text).toMatch(/price.*\(observed 2026-09-15, stale\)/);
+	});
 });

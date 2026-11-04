@@ -106,7 +106,9 @@ describe("undoChange", () => {
 		);
 		const undo = undoChange(database, change.changeId, LATER);
 		expect(undo.restored).toBeGreaterThan(0);
-		expect(undo.skipped).toEqual([]);
+		expect(
+			undo.skipped.every((line) => line.includes("type schema changes are not reverted")),
+		).toBe(true);
 		const row = entity(database, "Northside Vet");
 		expect(row.archived).toBe(1);
 	});
@@ -124,6 +126,119 @@ describe("undoChange", () => {
 			.prepare("SELECT changeId FROM versions WHERE changeId = ?")
 			.all(`undo:${change.changeId}`) as { changeId: string }[];
 		expect(undoVersions.length).toBeGreaterThan(0);
+	});
+
+	it("undo of a change whose only effect was creating an inquiry archives it", () => {
+		const database = open();
+		const change = applyRecord(
+			database,
+			{
+				inquiry: { question: "Biscuit's knee" },
+				types: [clinicType],
+				entities: [],
+			},
+			ctx("call-inquiry"),
+		);
+		expect(change.errors).toEqual([]);
+		const undo = undoChange(database, change.changeId, LATER);
+		expect(undo.restored).toBeGreaterThan(0);
+		const row = database
+			.raw()
+			.prepare("SELECT archived FROM inquiries WHERE question = ?")
+			.get("Biscuit's knee") as { archived: number };
+		expect(row.archived).toBe(1);
+
+		// Re-applying the same question revives the archived inquiry.
+		const revive = applyRecord(
+			database,
+			{
+				inquiry: { question: "Biscuit's knee" },
+				types: [clinicType],
+				entities: [],
+			},
+			ctx("call-revive"),
+		);
+		expect(revive.errors).toEqual([]);
+		const revived = database
+			.raw()
+			.prepare("SELECT COUNT(*) AS n, MAX(archived) AS archived FROM inquiries WHERE question = ?")
+			.get("Biscuit's knee") as { n: number; archived: number };
+		expect(revived).toEqual({ n: 1, archived: 0 });
+	});
+
+	it("undo reports type schema changes as not reverted", () => {
+		const database = open();
+		const change = applyRecord(
+			database,
+			{ types: [clinicType], entities: [clinic("Northside Vet", "555-0100", 120)] },
+			ctx("call-create"),
+		);
+		const undo = undoChange(database, change.changeId, LATER);
+		expect(
+			undo.skipped.some((line) => line.includes("type schema changes are not reverted")),
+		).toBe(true);
+		// The type still exists.
+		const type = database
+			.raw()
+			.prepare("SELECT name FROM types WHERE name = ?")
+			.get("vet clinic");
+		expect(type).toBeDefined();
+	});
+
+	it("undo A after B renamed the entity skips and the rename stands", () => {
+		const database = open();
+		const changeA = applyRecord(
+			database,
+			{ types: [clinicType], entities: [clinic("Northside Vet", "555-0100", 120)] },
+			ctx("call-a"),
+		);
+		const renamed = clinic("Northside Animal Clinic", "555-0100", 120);
+		const changeB = applyRecord(
+			database,
+			{ types: [clinicType], entities: [renamed] },
+			ctx("call-b"),
+		);
+		expect(changeB.errors).toEqual([]);
+		const undoA = undoChange(database, changeA.changeId, LATER);
+		expect(undoA.restored).toBe(0);
+		expect(undoA.skipped.some((line) => line.includes("name changed"))).toBe(true);
+		const row = entity(database, "Northside Animal Clinic");
+		expect(row).toBeDefined();
+		expect(row.archived).toBe(0);
+	});
+
+	it("undo A after B changed a role's reason only skips and the reason stands", () => {
+		const database = open();
+		const changeA = applyRecord(
+			database,
+			{
+				inquiry: { question: "Biscuit's knee" },
+				types: [clinicType],
+				entities: [
+					{ ...clinic("Northside Vet", "555-0100", 120), role: "candidate", reason: "close" },
+				],
+			},
+			ctx("call-a"),
+		);
+		const changeB = applyRecord(
+			database,
+			{
+				inquiry: { question: "Biscuit's knee" },
+				types: [clinicType],
+				entities: [
+					{ ...clinic("Northside Vet", "555-0100", 120), role: "candidate", reason: "close and cheap" },
+				],
+			},
+			ctx("call-b"),
+		);
+		expect(changeB.errors).toEqual([]);
+		const undoA = undoChange(database, changeA.changeId, LATER);
+		expect(undoA.skipped.some((line) => line.includes("reason changed"))).toBe(true);
+		const role = database
+			.raw()
+			.prepare("SELECT reason FROM roles")
+			.get() as { reason: string };
+		expect(role.reason).toBe("close and cheap");
 	});
 
 	it("undo of a change that only added a role removes that role", () => {

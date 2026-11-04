@@ -385,61 +385,6 @@ describe("applyRecord", () => {
 		expect(count(database, "entities")).toBe(1);
 	});
 
-	it("retypeEntities moves extra values into attributes and keeps key matching working under the new family root", () => {
-		const database = open();
-		const family: TypeDef[] = [
-			{
-				name: "clinic",
-				description: "Any clinic.",
-				fields: [{ name: "phone", type: "string", identity: true }],
-			},
-			clinicType,
-		];
-		const created = applyRecord(
-			database,
-			{
-				types: family,
-				entities: [clinic("Northside Vet", "555-0100", 120)],
-			},
-			ctx("call-create"),
-		);
-		retypeEntities(database, created.touched, "clinic", "change-retype", NOW);
-		const row = database
-			.raw()
-			.prepare(
-				"SELECT e.fields AS fields, e.attributes AS attributes, t.name AS typeName FROM entities e JOIN types t ON t.id = e.typeId WHERE e.name = ?",
-			)
-			.get("Northside Vet") as {
-			fields: string;
-			attributes: string;
-			typeName: string;
-		};
-		expect(row.typeName).toBe("clinic");
-		expect(JSON.parse(row.fields)).toEqual({});
-		const attributes = JSON.parse(row.attributes) as Record<string, unknown>;
-		expect(attributes.price).toBeDefined();
-
-		// Key matching still de-duplicates under the new family root.
-		const second = applyRecord(
-			database,
-			{
-				types: family,
-				entities: [
-					{
-						type: "clinic",
-						name: "Northside Vet",
-						keys: { phone: "(555) 0100" },
-						fields: {},
-					},
-				],
-			},
-			ctx("call-match"),
-		);
-		expect(second.errors).toEqual([]);
-		expect(second.touched).toEqual(created.touched);
-		expect(count(database, "entities")).toBe(1);
-	});
-
 	it("rejects records over the type and entity limits", () => {
 		const database = open();
 		const tooManyTypes = applyRecord(

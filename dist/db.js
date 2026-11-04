@@ -37,7 +37,8 @@ const SCHEMA = `
 		startedAt INTEGER NOT NULL,
 		touchedAt INTEGER NOT NULL,
 		conversations TEXT NOT NULL DEFAULT '[]',
-		outcome TEXT
+		outcome TEXT,
+		archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1))
 	);
 	CREATE TABLE IF NOT EXISTS roles (
 		id INTEGER PRIMARY KEY,
@@ -73,7 +74,13 @@ const SCHEMA = `
 		version INTEGER NOT NULL
 	);
 `;
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
+/** Ordered migrations from version N to N+1 (index = from-version - 1). */
+const MIGRATIONS = {
+    // v2: inquiries gain `archived` — records are never deleted, only
+    // archived, and undo of an inquiry create needs somewhere to mark it.
+    1: "ALTER TABLE inquiries ADD COLUMN archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1))",
+};
 /**
  * The per-user knowledge store. One database per directory user at
  * join(host.stores.user(user).paths.data, "knowledge.db").
@@ -110,6 +117,19 @@ export class KnowledgeDb {
                 this.db.exec(SCHEMA);
                 this.db
                     .prepare("INSERT INTO schema_version (version) VALUES (?)")
+                    .run(SCHEMA_VERSION);
+                return;
+            }
+            for (let version = current.version; version < SCHEMA_VERSION; version++) {
+                const migration = MIGRATIONS[version];
+                if (migration === undefined) {
+                    throw new Error(`knowledge: missing migration from schema v${version}`);
+                }
+                this.db.exec(migration);
+            }
+            if (current.version < SCHEMA_VERSION) {
+                this.db
+                    .prepare("UPDATE schema_version SET version = ?")
                     .run(SCHEMA_VERSION);
             }
         });
