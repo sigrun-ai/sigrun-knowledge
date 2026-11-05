@@ -656,16 +656,19 @@ export async function maintain(
 			// Re-parenting changes the child's identity family: its key
 			// rows must re-root at the new parent or the next record for
 			// the same key would duplicate the entity (apply matches by
-			// family root). A collision with a key row already at the
-			// parent root (a folded sibling's key) resolves by keeping the
-			// folded sibling's row and moving ours — both point at the
-			// same normalized identity, and the unique index is on
-			// (root, key, normalized), so identical normalized values
+			// family root). The rows are selected by the child's ENTITIES —
+			// a child type's rows live at its old FAMILY root (the
+			// grandparent), not at its own type id, so a typeFamilyRoot
+			// select here would miss them. A collision with a key row
+			// already at the parent root (a folded sibling's key) resolves
+			// by keeping the folded sibling's row and moving ours — both
+			// point at the same normalized identity, and the unique index
+			// is on (root, key, normalized), so identical normalized values
 			// would collide: drop the child's duplicate row instead.
 			const keyRows = db
 				.raw()
 				.prepare(
-					"SELECT id, entityId, typeFamilyRoot, key, normalized FROM entity_keys WHERE typeFamilyRoot = ?",
+					"SELECT id, entityId, typeFamilyRoot, key, normalized FROM entity_keys WHERE entityId IN (SELECT id FROM entities WHERE typeId = ?)",
 				)
 				.all(type.id) as {
 				id: number;
