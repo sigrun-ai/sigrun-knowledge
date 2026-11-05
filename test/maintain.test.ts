@@ -1009,3 +1009,172 @@ describe("knowledge idle pass (maintain)", () => {
 		expect(fake.calls.filter((call) => call.name === "recall.index").length).toBe(3);
 	});
 });
+
+// ─── Grandparent-rooted keys re-root on fold (follow-up to the final review) ──
+
+describe("maintain: grandparent-rooted keys", () => {
+	let dirs: string[] = [];
+	afterEach(() => {
+		for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+		dirs = [];
+	});
+	it("three children of one existing parent generalize: their grandparent-rooted key rows re-root to the new parent", async () => {
+		const second = fakeHost({
+			hooks: {
+				"recall.index": () => ({
+					status: "ok",
+					provider: "recall",
+					value: { handle: "d:x", class: "normal", changed: true },
+				}),
+			},
+		});
+		const db = KnowledgeDb.open(":memory:");
+		dirs.push(second.dir);
+		const target = createTarget({
+			host: second.host as never,
+			dbForUser: () => db,
+			now: () => NOW,
+		});
+		const seeded = applyRecord(
+			db,
+			{
+				types: [
+					{
+						name: "clinic",
+						description: "A clinic.",
+						fields: [
+							{ name: "phone", type: "string", identity: true },
+							{ name: "city", type: "string" },
+						],
+					},
+					{
+						name: "vet clinic",
+						description: "A vet clinic.",
+						parent: "clinic",
+						fields: [
+							{ name: "phone", type: "string", identity: true },
+							{ name: "city", type: "string" },
+							{ name: "species", type: "string" },
+						],
+					},
+					{
+						name: "dental clinic",
+						description: "A dental clinic.",
+						parent: "clinic",
+						fields: [
+							{ name: "phone", type: "string", identity: true },
+							{ name: "city", type: "string" },
+							{ name: "services", type: "string" },
+						],
+					},
+					{
+						name: "walk-in clinic",
+						description: "A walk-in clinic.",
+						parent: "clinic",
+						fields: [
+							{ name: "phone", type: "string", identity: true },
+							{ name: "city", type: "string" },
+							{ name: "hours", type: "string" },
+						],
+					},
+				],
+				entities: [
+					{
+						type: "vet clinic",
+						name: "Northside Vet",
+						keys: { phone: "555-0100" },
+						fields: {},
+					},
+					{
+						type: "dental clinic",
+						name: "Smile Dental",
+						keys: { phone: "555-0200" },
+						fields: {},
+					},
+					{
+						type: "walk-in clinic",
+						name: "Downtown Walk-In",
+						keys: { phone: "555-0300" },
+						fields: {},
+					},
+				],
+			},
+			{ callId: "seed-grand2", now: NOW },
+		);
+		expect(seeded.errors).toEqual([]);
+		const clinicId = typeRow(db, "clinic").id;
+		// The children's key rows live at the FAMILY root (clinic).
+		const keyRows = db
+			.raw()
+			.prepare(
+				"SELECT id, entityId, typeFamilyRoot, key, normalized FROM entity_keys",
+			)
+			.all() as {
+			id: number;
+			entityId: string;
+			typeFamilyRoot: number;
+			key: string;
+			normalized: string;
+		}[];
+		expect(keyRows).toHaveLength(3);
+		for (const row of keyRows) {
+			expect(row.typeFamilyRoot).toBe(clinicId);
+		}
+
+		const budget: MaintenanceBudget = {
+			deadline: NOW + 60_000,
+			runs: 1,
+			run: async () =>
+				completed(
+					JSON.stringify({
+						general: true,
+						name: "care provider",
+						description: "A care provider.",
+						fields: [
+							{ name: "phone", type: "string" },
+							{ name: "city", type: "string" },
+						],
+					}),
+				),
+		};
+		const report = await target.maintain!(USER, {} as never, budget);
+		expect(report.changes).toHaveLength(1);
+
+		const parentId = typeRow(db, "care provider").id;
+		// Every child's key row re-rooted to the new parent — wherever it
+		// lived before (grandparent root for child types).
+		const after = db
+			.raw()
+			.prepare(
+				"SELECT id, entityId, typeFamilyRoot, key FROM entity_keys",
+			)
+			.all() as { entityId: string; typeFamilyRoot: number; key: string }[];
+		expect(after).toHaveLength(3);
+		for (const row of after) {
+			expect(row.typeFamilyRoot).toBe(parentId);
+		}
+
+		// The discriminating consequence: a later record with the same key
+		// MERGES into the existing entity instead of duplicating.
+		const merged = applyRecord(
+			db,
+			{
+				entities: [
+					{
+						type: "vet clinic",
+						name: "Northside Vet",
+						keys: { phone: "(555) 0100" },
+						fields: {},
+					},
+				],
+			},
+			{ callId: "merge-grand", now: NOW },
+		);
+		expect(merged.errors).toEqual([]);
+		const entities = db
+			.raw()
+			.prepare("SELECT id, name FROM entities WHERE archived = 0")
+			.all() as { id: string; name: string }[];
+		expect(entities.filter((e) => e.name === "Northside Vet")).toHaveLength(1);
+	});
+});
