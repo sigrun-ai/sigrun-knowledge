@@ -83,7 +83,11 @@ export function renderCard(
 	);
 	const fields = JSON.parse(row.fields) as Record<string, FieldRecord>;
 	const sources = new Set<string>();
-	const lines: string[] = [];
+	// The card body leads with the title line: recall indexes a doc's TEXT
+	// (never its title), so the type/entity name must appear here for the
+	// card to be findable by name.
+	const title = `${row.typeName} — ${row.name}`;
+	const lines: string[] = [title];
 
 	for (const [name, field] of Object.entries(fields)) {
 		sources.add(field.source);
@@ -120,9 +124,9 @@ export function renderCard(
 	}
 
 	return {
-		title: `${row.typeName} — ${row.name}`,
+		title,
 		text: lines.join("\n"),
-		date: new Date(now).toISOString().slice(0, 10),
+		date: new Date(now).toISOString(),
 		sources: [...sources],
 	};
 }

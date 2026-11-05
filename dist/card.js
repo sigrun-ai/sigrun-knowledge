@@ -42,7 +42,11 @@ export function renderCard(db, entityId, now) {
     const typeFields = effectiveFields(new Map(typeRows.map((type) => [type.id, type])), row.typeId);
     const fields = JSON.parse(row.fields);
     const sources = new Set();
-    const lines = [];
+    // The card body leads with the title line: recall indexes a doc's TEXT
+    // (never its title), so the type/entity name must appear here for the
+    // card to be findable by name.
+    const title = `${row.typeName} — ${row.name}`;
+    const lines = [title];
     for (const [name, field] of Object.entries(fields)) {
         sources.add(field.source);
         const def = typeFields.find((candidate) => candidate.name === name);
@@ -71,9 +75,9 @@ export function renderCard(db, entityId, now) {
         lines.push(`${role.question}: ${role.role}${reason}`);
     }
     return {
-        title: `${row.typeName} — ${row.name}`,
+        title,
         text: lines.join("\n"),
-        date: new Date(now).toISOString().slice(0, 10),
+        date: new Date(now).toISOString(),
         sources: [...sources],
     };
 }
