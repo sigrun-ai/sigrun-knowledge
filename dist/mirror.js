@@ -43,8 +43,13 @@ export async function mirrorEntities(host, db, user, entityIds, now) {
             console.error("knowledge: recall.index failed", error);
             continue;
         }
-        if (result.status !== "ok")
+        if (result.status !== "ok") {
+            // A rejected/failed hook leaves indexedAt behind so the idle pass
+            // retries — but never silently: name the hook and status so the
+            // shape-mismatch class the e2e exposed surfaces immediately.
+            console.error(`knowledge: recall.index answered ${result.status} for entity ${entityId}`);
             continue;
+        }
         const value = result.value;
         const cls = value?.class === "local-only" ? "local-only" : "normal";
         db.raw()

@@ -89,7 +89,15 @@ export async function mirrorEntities(
 			console.error("knowledge: recall.index failed", error);
 			continue;
 		}
-		if (result.status !== "ok") continue;
+		if (result.status !== "ok") {
+			// A rejected/failed hook leaves indexedAt behind so the idle pass
+			// retries — but never silently: name the hook and status so the
+			// shape-mismatch class the e2e exposed surfaces immediately.
+			console.error(
+				`knowledge: recall.index answered ${result.status} for entity ${entityId}`,
+			);
+			continue;
+		}
 		const value = result.value as
 			| { handle?: string; class?: string; changed?: boolean }
 			| undefined;
