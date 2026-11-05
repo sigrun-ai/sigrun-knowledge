@@ -23,7 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   skip hid every mirror failure — including the card-date format bug the
   e2e later caught).
 
-## [0.1.0] - 2026-11-05
+## [0.1.1] - 2026-11-05
+
+### Fixed
+
+- First registry release. 0.1.0 was consumed by the npm stage
+  bootstrap (the name-claiming placeholder) and never published; 0.1.1
+  is the identical tree.
 
 ### Added
 
