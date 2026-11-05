@@ -950,9 +950,9 @@ describe("knowledge idle pass (maintain)", () => {
 		const parent = typeRow(db, "clinic");
 		// All foldable entities re-typed (52 walk-in entities).
 		expect(entityRows(db, parent.id).length).toBe(52);
-		// The colliding key row was adopted by the surviving entity of the
-		// pair (the duplicate row dropped, versioned under the change);
-		// whichever of the pair retyped second owns it.
+		// The incumbent keeps its key row: Northside Vet (the kept-child
+		// entity, re-rooted to the parent at re-parenting time) owns it;
+		// Downtown Walk-In's duplicate row was dropped (versioned).
 		const pairKeys = db
 			.raw()
 			.prepare(
@@ -960,7 +960,7 @@ describe("knowledge idle pass (maintain)", () => {
 			)
 			.all() as { id: number; name: string }[];
 		expect(pairKeys).toHaveLength(1);
-		expect(["Northside Vet", "Downtown Walk-In"]).toContain(pairKeys[0]!.name);
+		expect(pairKeys[0]!.name).toBe("Northside Vet");
 		const dropped = db
 			.raw()
 			.prepare(

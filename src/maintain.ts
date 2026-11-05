@@ -210,32 +210,6 @@ function dropConflictingKeys(
 		db.raw()
 			.prepare("DELETE FROM entity_keys WHERE id = ?")
 			.run(keyRow.id);
-		// Point the colliding row at our entity so the retype's re-root
-		// no-ops instead of violating UNIQUE.
-		const collidingRow = db
-			.raw()
-			.prepare(
-				"SELECT id, entityId, typeFamilyRoot, key, normalized FROM entity_keys WHERE id = ?",
-			)
-			.get(collision.id) as {
-			id: number;
-			entityId: string;
-			typeFamilyRoot: number;
-			key: string;
-			normalized: string;
-		};
-		writeVersion(
-			db,
-			changeId,
-			"entity_keys",
-			String(collidingRow.id),
-			collidingRow,
-			{ ...collidingRow, entityId },
-			now,
-		);
-		db.raw()
-			.prepare("UPDATE entity_keys SET entityId = ? WHERE id = ?")
-			.run(entityId, collidingRow.id);
 	}
 	return true;
 }
@@ -462,9 +436,8 @@ export async function maintain(
 	// 2. Continue an unfinished re-typing before proposing anything new.
 	const continuation = loadContinuation(db);
 	if (continuation !== undefined) {
-	const batch = continuation.remaining.slice(0, RETYPE_LIMIT);
+		const batch = continuation.remaining.slice(0, RETYPE_LIMIT);
 		const rest = continuation.remaining.slice(RETYPE_LIMIT);
-		const failed: string[] = [];
 		if (batch.length > 0) {
 			const typeExists = db
 				.raw()
@@ -515,13 +488,7 @@ export async function maintain(
 					}
 				}
 			}
-			await mirrorEntities(
-				deps.host,
-				db,
-				user,
-				batch.filter((id) => !failed.includes(id)),
-				deps.now(),
-			);
+			await mirrorEntities(deps.host, db, user, batch, deps.now());
 		}
 		const remaining = rest;
 		if (remaining.length > 0) {
@@ -718,37 +685,14 @@ export async function maintain(
 					| undefined;
 				if (collision !== undefined) {
 					// Same normalized identity already keyed at the new root:
-					// the child's row is a duplicate; drop it (versioned) and
-					// point the colliding row at our entity so the fold's
-					// retype re-rooting no-ops instead of violating UNIQUE.
+					// the child's row is a duplicate; drop it (versioned).
+					// The incumbent keeps its key row — a later record for the
+					// shared key merges into the incumbent, never into an
+					// entity the fold touched.
 					writeVersion(db, changeId, "entity_keys", String(keyRow.id), keyRow, null, now);
 					db.raw()
 						.prepare("DELETE FROM entity_keys WHERE id = ?")
 						.run(keyRow.id);
-					const collidingRow = db
-						.raw()
-						.prepare(
-							"SELECT id, entityId, typeFamilyRoot, key, normalized FROM entity_keys WHERE id = ?",
-						)
-						.get(collision.id) as {
-						id: number;
-						entityId: string;
-						typeFamilyRoot: number;
-						key: string;
-						normalized: string;
-					};
-					writeVersion(
-						db,
-						changeId,
-						"entity_keys",
-						String(collidingRow.id),
-						collidingRow,
-						{ ...collidingRow, entityId: keyRow.entityId },
-						now,
-					);
-					db.raw()
-						.prepare("UPDATE entity_keys SET entityId = ? WHERE id = ?")
-						.run(keyRow.entityId, collidingRow.id);
 					continue;
 				}
 				writeVersion(
