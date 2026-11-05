@@ -1,5 +1,5 @@
 import type { KnowledgeDb } from "./db.js";
-import type { FieldDef } from "./schema.js";
+import { type FieldDef, type TypeHierarchyRow, effectiveFields } from "./schema.js";
 
 export interface KnowledgeCard {
 	title: string;
@@ -54,7 +54,7 @@ export function renderCard(
 	const row = db
 		.raw()
 		.prepare(
-			`SELECT e.id, e.name, e.fields, t.fields AS typeFields, t.name AS typeName
+			`SELECT e.id, e.name, e.fields, e.typeId, t.name AS typeName
 			 FROM entities e JOIN types t ON t.id = e.typeId WHERE e.id = ?`,
 		)
 		.get(entityId) as
@@ -62,7 +62,7 @@ export function renderCard(
 				id: string;
 				name: string;
 				fields: string;
-				typeFields: string;
+				typeId: number;
 				typeName: string;
 			}
 		| undefined;
@@ -70,7 +70,17 @@ export function renderCard(
 		throw new Error(`renderCard: unknown entity "${entityId}"`);
 	}
 
-	const typeFields = JSON.parse(row.typeFields) as FieldDef[];
+	// Inherited fields carry their defs (horizonDays) down the hierarchy.
+	const typeRows = db
+		.raw()
+		.prepare("SELECT id, parentId, fields FROM types")
+		// SAFETY: the types table columns are fixed by db.ts's schema;
+		// node:sqlite types rows generically.
+		.all() as unknown as TypeHierarchyRow[];
+	const typeFields = effectiveFields(
+		new Map(typeRows.map((type) => [type.id, type])),
+		row.typeId,
+	);
 	const fields = JSON.parse(row.fields) as Record<string, FieldRecord>;
 	const sources = new Set<string>();
 	const lines: string[] = [];

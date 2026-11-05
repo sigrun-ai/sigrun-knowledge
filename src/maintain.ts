@@ -1,5 +1,4 @@
 import type {
-	CurationRunResult,
 	HandlerContext,
 	MaintenanceBudget,
 	MaintenanceReport,
@@ -10,8 +9,13 @@ import { randomUUID } from "node:crypto";
 import type { KnowledgeDb } from "./db.js";
 import { mirrorEntities, type MirrorHost } from "./mirror.js";
 import { retypeEntities } from "./apply.js";
-import type { FieldDef, TypeDef } from "./schema.js";
-import { TYPE_NAME_PATTERN } from "./schema.js";
+import {
+	effectiveFields,
+	type FieldDef,
+	type TypeDef,
+	type TypeHierarchyRow,
+	TYPE_NAME_PATTERN,
+} from "./schema.js";
 
 const REINDEX_LIMIT = 50;
 const RETYPE_LIMIT = 50;
@@ -73,10 +77,9 @@ function loadLiveTypes(db: KnowledgeDb): TypeRow[] {
 		.prepare(
 			`SELECT DISTINCT t.id, t.name, t.description, t.parentId, t.fields, t.archived
 			 FROM types t
-			 WHERE t.archived = 0 AND NOT EXISTS (
+			WHERE t.archived = 0 AND NOT EXISTS (
 			   SELECT 1 FROM types c
-			   WHERE c.archived = 0 AND c.parentId = t.id
-			     AND t.parentId IS NULL)`,
+			   WHERE c.archived = 0 AND c.parentId = t.id)`,
 		)
 		// SAFETY: the types table columns are fixed by db.ts's schema; node:sqlite
 		// types rows generically.
@@ -104,29 +107,18 @@ function entityIdsOf(db: KnowledgeDb, typeId: number): string[] {
 	).map((row) => row.id);
 }
 
-/** Effective (own + inherited) field defs for a type. */
-export function effectiveFields(typesById: Map<number, TypeRow>, typeId: number): FieldDef[] {
-	const chain: TypeRow[] = [];
-	let current = typesById.get(typeId);
-	while (current !== undefined) {
-		chain.unshift(current);
-		current = current.parentId === null ? undefined : typesById.get(current.parentId);
-	}
-	const byName = new Map<string, FieldDef>();
-	for (const type of chain) {
-		for (const field of JSON.parse(type.fields) as FieldDef[]) {
-			byName.set(field.name, field);
-		}
-	}
-	return [...byName.values()];
-}
-
 /** The group key for the 30-day declined memory. */
 function groupKey(names: readonly string[]): string {
 	return [...names].sort().join("|");
 }
 
 function isDeclined(db: KnowledgeDb, key: string, now: number): boolean {
+	// Expired declines are pruned as they age out.
+	db.raw()
+		.prepare(
+			"DELETE FROM maintenance WHERE kind = 'declined-generalization' AND at < ?",
+		)
+		.run(now - DECLINED_TTL_MS);
 	const rows = db
 		.raw()
 		.prepare(
@@ -250,9 +242,13 @@ function parseAnswer(text: string):
 		if (typeof field.name !== "string" || typeof field.type !== "string") {
 			return undefined;
 		}
-		const def: FieldDef = { name: field.name, type: field.type as FieldDef["type"] };
+	const def: FieldDef = { name: field.name, type: field.type as FieldDef["type"] };
 		if (typeof field.horizonDays === "number") def.horizonDays = field.horizonDays;
 		if (typeof field.description === "string") def.description = field.description;
+		if (typeof field.identity === "boolean") def.identity = field.identity;
+		if (field.type === "list" && typeof field.item === "string") {
+			def.item = field.item as Exclude<FieldDef["type"], "list">;
+		}
 		if (Array.isArray(field.values)) {
 			def.values = field.values.filter((v): v is string => typeof v === "string");
 		}
@@ -287,12 +283,14 @@ export async function maintain(
 	const changes: { changeId: string; summary: string }[] = [];
 	let more = false;
 
-	// 1. Re-index pending entities (indexedAt behind their last version,
-	//    or never indexed).
+	// 1. Re-index pending entities: indexedAt behind their last version,
+	//    never indexed, or whose card text changed because a field
+	//    crossed its horizon since the index stamp.
+	const now = deps.now();
 	const pending = db
 		.raw()
 		.prepare(
-			`SELECT e.id FROM entities e
+			`SELECT e.id, e.typeId, e.fields, e.indexedAt FROM entities e
 			 WHERE e.archived = 0 AND (
 			   e.indexedAt IS NULL OR e.indexedAt < COALESCE((
 			     SELECT MAX(v.at) FROM versions v
@@ -300,15 +298,67 @@ export async function maintain(
 			   ), 0))
 			 ORDER BY e.id LIMIT ?`,
 		)
-		.all(REINDEX_LIMIT) as { id: string }[];
-	if (pending.length > 0) {
-		await mirrorEntities(
-			deps.host,
-			db,
-			user,
-			pending.map((row) => row.id),
-			deps.now(),
-		);
+		.all(REINDEX_LIMIT) as {
+		id: string;
+		typeId: number;
+		fields: string;
+		indexedAt: number | null;
+	}[];
+	const pendingIds = new Set(pending.map((row) => row.id));
+	if (pendingIds.size < REINDEX_LIMIT) {
+		// Horizon-crossed: a field went stale (or came back) since the
+		// index, so the mirrored card text no longer matches.
+		const typeRows = db
+			.raw()
+			.prepare("SELECT id, parentId, fields FROM types")
+			// SAFETY: types columns are fixed by db.ts's schema.
+			.all() as unknown as TypeHierarchyRow[];
+		const typesById = new Map(typeRows.map((type) => [type.id, type]));
+		const candidates = db
+			.raw()
+			.prepare(
+				"SELECT id, typeId, fields, indexedAt FROM entities WHERE archived = 0 AND indexedAt IS NOT NULL ORDER BY id",
+			)
+			.all() as {
+			id: string;
+			typeId: number;
+			fields: string;
+			indexedAt: number;
+		}[];
+		for (const candidate of candidates) {
+			if (pendingIds.size >= REINDEX_LIMIT) break;
+			if (pendingIds.has(candidate.id)) continue;
+			const defs = new Map(
+				effectiveFields(typesById, candidate.typeId).map((def) => [
+					def.name,
+					def,
+				]),
+			);
+			const fields = JSON.parse(candidate.fields) as Record<
+				string,
+				{ value: unknown; source: string; observedAt: string }
+			>;
+			for (const [fieldName, field] of Object.entries(fields)) {
+				const def = defs.get(fieldName);
+				if (def?.horizonDays === undefined) continue;
+				const observedMs = Date.parse(
+					/^\d{4}-\d{2}-\d{2}$/.test(field.observedAt)
+						? `${field.observedAt}T00:00:00Z`
+						: field.observedAt,
+				);
+				if (Number.isNaN(observedMs)) continue;
+				const staleAt = observedMs + def.horizonDays * 24 * 60 * 60 * 1000;
+				// The horizon sits between the index stamp and now: the card
+				// gained (or would lose) its stale mark since indexing.
+				if (candidate.indexedAt < staleAt && now >= staleAt) {
+					pendingIds.add(candidate.id);
+					break;
+				}
+			}
+		}
+	}
+	if (pendingIds.size > 0) {
+		await mirrorEntities(deps.host, db, user, [...pendingIds], now);
 	}
 	if (deps.now() > budget.deadline) {
 		return { changes, ...(more ? { more: true } : {}) };
@@ -319,12 +369,52 @@ export async function maintain(
 	if (continuation !== undefined) {
 		const batch = continuation.remaining.slice(0, RETYPE_LIMIT);
 		const rest = continuation.remaining.slice(RETYPE_LIMIT);
+		let failed: string[] = [];
 		if (batch.length > 0) {
-			retypeEntities(db, batch, continuation.parentType, continuation.changeId, deps.now());
-			await mirrorEntities(deps.host, db, user, batch, deps.now());
+			const typeExists = db
+				.raw()
+				.prepare("SELECT 1 AS x FROM types WHERE name = ? AND archived = 0")
+				.get(continuation.parentType) as { x: number } | undefined;
+			if (typeExists === undefined) {
+				// The fold target vanished (archived/renamed mid-fold): the
+				// continuation can never finish — drop it rather than throw
+				// forever.
+				console.error(
+					`knowledge: dropping re-type continuation into "${continuation.parentType}" (type no longer live)`,
+				);
+				dropContinuation(db);
+				return { changes, ...(more ? { more: true } : {}) };
+			}
+			try {
+				retypeEntities(db, batch, continuation.parentType, continuation.changeId, deps.now());
+			} catch (error) {
+				// One bad row (a key collision with the new family root)
+				// must not block the other 49: retry per entity and park
+				// only the failing ids.
+				console.error("knowledge: continuation re-type batch failed", error);
+				for (const entityId of batch) {
+					try {
+						retypeEntities(db, [entityId], continuation.parentType, continuation.changeId, deps.now());
+					} catch (single) {
+						console.error(
+							`knowledge: re-type of entity ${entityId} failed`,
+							single,
+						);
+						failed.push(entityId);
+					}
+				}
+			}
+			await mirrorEntities(
+				deps.host,
+				db,
+				user,
+				batch.filter((id) => !failed.includes(id)),
+				deps.now(),
+			);
 		}
-		if (rest.length > 0) {
-			saveContinuation(db, continuation.changeId, continuation.parentType, rest, deps.now());
+		const remaining = [...rest, ...failed];
+		if (remaining.length > 0) {
+			saveContinuation(db, continuation.changeId, continuation.parentType, remaining, deps.now());
 			more = true;
 		} else {
 			dropContinuation(db);
@@ -343,7 +433,9 @@ export async function maintain(
 	}
 
 	// Find sibling groups: same parent (or both root), not archived,
-	// >= 3 types, pairwise field-name Jaccard >= 0.5.
+	// >= 3 types, pairwise field-name Jaccard >= 0.5. Groups remembered
+	// as declined are filtered BEFORE picking the max so a declined best
+	// group doesn't starve the others.
 	const types = loadLiveTypes(db);
 	const siblings = new Map<string, TypeRow[]>();
 	for (const type of types) {
@@ -368,13 +460,11 @@ export async function maintain(
 			}
 		}
 		if (!ok) continue;
+		if (isDeclined(db, groupKey(group.map((type) => type.name)), now)) continue;
 		const count = group.reduce((sum, type) => sum + entityCount(db, type.id), 0);
 		if (best === undefined || count > best.entities) best = { group, entities: count };
 	}
 	if (best === undefined) return { changes, ...(more ? { more: true } : {}) };
-	if (isDeclined(db, groupKey(best.group.map((type) => type.name)), deps.now())) {
-		return { changes, ...(more ? { more: true } : {}) };
-	}
 
 	const run = await budget.run(
 		generalizePrompt(
@@ -397,25 +487,26 @@ export async function maintain(
 		rememberDeclined(db, groupKey(best.group.map((type) => type.name)), deps.now());
 		return { changes, ...(more ? { more: true } : {}) };
 	}
-	// The answer must not rename onto an existing type (hierarchy would
-	// silently merge families) and must be a valid type name; decline
-	// in either case.
-	if (
-		types.some((type) => type.name === answer.name) ||
-		!TYPE_NAME_PATTERN.test(answer.name)
-	) {
+	// The answer must not rename onto ANY types row (the name column is
+	// UNIQUE across archived rows too) and must be a valid type name;
+	// decline in either case.
+	const nameTaken = db
+		.raw()
+		.prepare("SELECT 1 AS x FROM types WHERE name = ?")
+		.get(answer.name) as { x: number } | undefined;
+	if (nameTaken !== undefined || !TYPE_NAME_PATTERN.test(answer.name)) {
 		rememberDeclined(db, groupKey(best.group.map((type) => type.name)), deps.now());
 		return { changes, ...(more ? { more: true } : {}) };
 	}
 
 	// 4. Apply as a hierarchy in ONE change.
 	if (deps.now() > budget.deadline) {
-		// Past the deadline: decline silently rather than half-applying.
-		rememberDeclined(db, groupKey(best.group.map((type) => type.name)), deps.now());
-		return { changes, ...(more ? { more: true } : {}) };
+		// A deadline is not an answer: keep the group's candidacy (and the
+		// paid run) by asking again next pass, without remembering a
+		// decline.
+		return { changes: [], more: true };
 	}
 	const changeId = `maintain:${randomUUID()}`;
-	const now = deps.now();
 	const group = best.group;
 	const answerFieldNames = new Set(answer.fields.map((field) => field.name));
 
@@ -483,6 +574,59 @@ export async function maintain(
 					"UPDATE types SET parentId = ?, fields = ?, version = version + 1 WHERE id = ?",
 				)
 				.run(parentId, JSON.stringify(distinct), type.id);
+
+			// Re-parenting changes the child's identity family: its key
+			// rows must re-root at the new parent or the next record for
+			// the same key would duplicate the entity (apply matches by
+			// family root). A collision with a key row already at the
+			// parent root (a folded sibling's key) resolves by keeping the
+			// folded sibling's row and moving ours — both point at the
+			// same normalized identity, and the unique index is on
+			// (root, key, normalized), so identical normalized values
+			// would collide: drop the child's duplicate row instead.
+			const keyRows = db
+				.raw()
+				.prepare(
+					"SELECT id, entityId, typeFamilyRoot, key, normalized FROM entity_keys WHERE typeFamilyRoot = ?",
+				)
+				.all(type.id) as {
+				id: number;
+				entityId: string;
+				typeFamilyRoot: number;
+				key: string;
+				normalized: string;
+			}[];
+			for (const keyRow of keyRows) {
+				const collision = db
+					.raw()
+					.prepare(
+						"SELECT id FROM entity_keys WHERE typeFamilyRoot = ? AND key = ? AND normalized = ? AND id != ?",
+					)
+					.get(parentId, keyRow.key, keyRow.normalized, keyRow.id) as
+					| { id: number }
+					| undefined;
+				if (collision !== undefined) {
+					// Same normalized identity already keyed at the new root:
+					// the child's row is a duplicate; drop it (versioned).
+					writeVersion(db, changeId, "entity_keys", String(keyRow.id), keyRow, null, now);
+					db.raw()
+						.prepare("DELETE FROM entity_keys WHERE id = ?")
+						.run(keyRow.id);
+					continue;
+				}
+				writeVersion(
+					db,
+					changeId,
+					"entity_keys",
+					String(keyRow.id),
+					keyRow,
+					{ ...keyRow, typeFamilyRoot: parentId },
+					now,
+				);
+				db.raw()
+					.prepare("UPDATE entity_keys SET typeFamilyRoot = ? WHERE id = ?")
+					.run(parentId, keyRow.id);
+			}
 		}
 
 		for (const type of folded) {

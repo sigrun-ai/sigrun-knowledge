@@ -638,6 +638,199 @@ describe("knowledge idle pass (maintain)", () => {
 		for (const id of entityIds.walkin) expect(entityRow(db, id).typeId).toBe(walkin.id);
 	});
 
+	it("after generalization a record with the same identity key MERGES (no duplicate), and inherited fields validate and render stale", async () => {
+		const { db, target, budget } = setup([
+			completed(
+				JSON.stringify({
+					general: true,
+					name: "clinic",
+					description: "A clinic.",
+					fields: [
+						{ name: "phone", type: "string", identity: true },
+						{ name: "price", type: "money", horizonDays: 30 },
+					],
+				}),
+			),
+		]);
+		applyRecord(
+			db,
+			{
+				types: [
+					{
+						name: "vet clinic",
+						description: "A vet clinic.",
+						fields: [
+							{ name: "phone", type: "string", identity: true },
+							{ name: "price", type: "money", horizonDays: 30 },
+							{ name: "species", type: "string" },
+						],
+					},
+					{
+						name: "dental clinic",
+						description: "A dental clinic.",
+						fields: [
+							{ name: "phone", type: "string", identity: true },
+							{ name: "price", type: "money", horizonDays: 30 },
+							{ name: "services", type: "string" },
+						],
+					},
+					{
+						name: "walk-in clinic",
+						description: "A walk-in clinic.",
+						fields: [
+							{ name: "phone", type: "string", identity: true },
+							{ name: "price", type: "money", horizonDays: 30 },
+							{ name: "hours", type: "string" },
+						],
+					},
+				],
+				entities: [
+					{
+						type: "vet clinic",
+						name: "Northside Vet",
+						keys: { phone: "555-0100" },
+						fields: {},
+					},
+				],
+			},
+			{ callId: "seed-inherit", now: NOW },
+		);
+
+		await target.maintain!(USER, {} as never, budget);
+		const parent = typeRow(db, "clinic");
+
+		// Re-record the same identity key: it must MERGE, not duplicate —
+		// and the inherited (parent-declared) field validates.
+		const merged = applyRecord(
+			db,
+			{
+				entities: [
+					{
+						type: "vet clinic",
+						name: "Northside Vet",
+						keys: { phone: "555-0100" },
+						fields: {
+							price: {
+								value: { amount: 60, currency: "CAD" },
+								source: "d:2",
+								observedAt: "2026-09-20",
+							},
+						},
+					},
+				],
+			},
+			{ callId: "merge-inherit", now: NOW },
+		);
+		expect(merged.errors).toEqual([]);
+		const all = db
+			.raw()
+			.prepare("SELECT COUNT(*) AS n FROM entities WHERE archived = 0")
+			.get() as { n: number };
+		expect(all.n).toBe(1);
+		// The key row family root moved to the parent.
+		const keyRow = db
+			.raw()
+			.prepare("SELECT typeFamilyRoot FROM entity_keys WHERE entityId = ?")
+			.get(merged.touched[0]!) as { typeFamilyRoot: number };
+		expect(keyRow.typeFamilyRoot).toBe(parent.id);
+		// The inherited field's horizon applies in the card: observed
+		// 2026-09-20 + 30 days < NOW => stale.
+		const { renderCard } = await import("../src/card.js");
+		const card = renderCard(db, merged.touched[0]!, NOW);
+		expect(card.text).toContain("stale");
+	});
+
+	it("an entity whose field crossed its horizon since indexing is re-indexed", async () => {
+		const { db, target } = setup([]);
+		const seeded = applyRecord(
+			db,
+			{
+				types: [
+					{
+						name: "vet clinic",
+						description: "A vet clinic.",
+						fields: [
+							{ name: "phone", type: "string", identity: true },
+							{ name: "price", type: "money", horizonDays: 30 },
+						],
+					},
+				],
+				entities: [
+					{
+						type: "vet clinic",
+						name: "Northside Vet",
+						keys: { phone: "555-0100" },
+						fields: {
+							price: {
+								value: { amount: 60, currency: "CAD" },
+								source: "d:1",
+								observedAt: "2026-10-01",
+							},
+						},
+					},
+				],
+			},
+			{ callId: "seed-horizon", now: NOW },
+		);
+		// Pretend the entity was indexed while fresh (before the horizon
+		// crossed on 2026-10-31): stamp indexedAt by hand.
+		db.raw()
+			.prepare("UPDATE entities SET indexedAt = ? WHERE id = ?")
+			.run(Date.parse("2026-10-15T00:00:00Z"), seeded.touched[0]);
+		fake.calls.length = 0;
+
+		const zero: MaintenanceBudget = {
+			deadline: NOW + 60_000,
+			runs: 0,
+			run: async () => {
+				throw new Error("must not run");
+			},
+		};
+		await target.maintain!(USER, {} as never, zero);
+		expect(
+			fake.calls.filter((call) => call.name === "recall.index").length,
+		).toBe(1);
+		expect(entityRow(db, seeded.touched[0]!).indexedAt).toBe(NOW);
+	});
+
+	it("a deadline after a general:true answer stops without a decline row and reports more", async () => {
+		const { db } = setup([]);
+		seedSiblings(db);
+		let calls = 0;
+		// The deadline passes DURING the run (the answer arrives late).
+		let clock = NOW;
+		const lateTarget = createTarget({
+			host: fake.host as never,
+			dbForUser: () => db,
+			now: () => clock,
+		});
+		const budget: MaintenanceBudget = {
+			deadline: NOW + 1_000,
+			runs: 1,
+			run: async () => {
+				calls++;
+				clock = NOW + 60_000;
+				return completed(
+					JSON.stringify({
+						general: true,
+						name: "clinic",
+						description: "A clinic.",
+						fields: [{ name: "phone", type: "string" }],
+					}),
+				);
+			},
+		};
+		const report = await lateTarget.maintain!(USER, {} as never, budget);
+		expect(calls).toBe(1);
+		expect(report.changes).toHaveLength(0);
+		expect(report.more).toBe(true);
+		// No decline remembered; no parent created.
+		expect(maintenanceRows(db, "declined-generalization")).toHaveLength(0);
+		expect(
+			db.raw().prepare("SELECT COUNT(*) AS n FROM types").get() as { n: number },
+		).toEqual({ n: 3 });
+	});
+
 	it("pending re-index entities are mirrored first", async () => {
 		const { db, target } = setup([]);
 		const seeded = seedSiblings(db);

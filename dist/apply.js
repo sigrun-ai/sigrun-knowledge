@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { TYPE_NAME_PATTERN, validateValue, } from "./schema.js";
+import { effectiveFields, TYPE_NAME_PATTERN, validateValue, } from "./schema.js";
 const MAX_TYPES_PER_RECORD = 10;
 const MAX_ENTITIES_PER_RECORD = 50;
 const ENTITY_ROLES = ["candidate", "shortlisted", "rejected", "chosen"];
@@ -235,7 +235,9 @@ function applyValidating(db, input, ctx, errors) {
             continue;
         }
         for (const [fieldName, field] of Object.entries(entityInput.fields)) {
-            const def = type.fields.find((candidate) => candidate.name === fieldName);
+            // Inherited fields count: a parent's def validates a child's value.
+            const effective = effectiveFields(typesById, type.id);
+            const def = effective.find((candidate) => candidate.name === fieldName);
             if (def === undefined) {
                 errors.push(`entity "${entityInput.name}" field "${fieldName}" is not declared on type "${type.name}"`);
                 continue;
@@ -536,6 +538,14 @@ export function retypeEntities(db, entityIds, toType, changeId, now) {
             db.raw()
                 .prepare("UPDATE entities SET typeId = ?, fields = ?, attributes = ?, indexedAt = ? WHERE id = ?")
                 .run(next.typeId, next.fields, next.attributes, next.indexedAt, entity.id);
+            // The re-root is versioned so undo restores the key family.
+            const keyRows = db
+                .raw()
+                .prepare("SELECT id, entityId, typeFamilyRoot, key, normalized FROM entity_keys WHERE entityId = ?")
+                .all(entity.id);
+            for (const keyRow of keyRows) {
+                writeVersion(db, changeId, "entity_keys", String(keyRow.id), keyRow, { ...keyRow, typeFamilyRoot: rootId }, now);
+            }
             db.raw()
                 .prepare("UPDATE entity_keys SET typeFamilyRoot = ? WHERE entityId = ?")
                 .run(rootId, entity.id);

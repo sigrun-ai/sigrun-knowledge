@@ -346,14 +346,32 @@ function undoEntityKey(
 	undoId: string,
 	now: number,
 ): string {
-	// applyRecord only ever creates key rows; undo removes them.
-	if (version.before !== null) return "unchanged";
 	const row = db
 		.raw()
 		.prepare(
 			"SELECT id, entityId, typeFamilyRoot, key, normalized FROM entity_keys WHERE id = ?",
 		)
 		.get(Number(version.rowId)) as Record<string, unknown> | undefined;
+
+	if (version.before !== null) {
+		// A re-root (retypeEntities / maintain): restore the old family
+		// root while the row still sits at the change's after root.
+		if (row === undefined) return "unchanged";
+		const before = JSON.parse(version.before) as Record<string, unknown>;
+		const after = JSON.parse(version.after ?? "null") as Record<
+			string,
+			unknown
+		> | null;
+		const differs = afterDiffersFromRow(after, row, ["typeFamilyRoot"]);
+		if (differs !== null) return `entity_keys ${version.rowId}: ${differs}`;
+		writeVersion(db, undoId, "entity_keys", version.rowId, row, before, now);
+		db.raw()
+			.prepare("UPDATE entity_keys SET typeFamilyRoot = ? WHERE id = ?")
+			.run(before.typeFamilyRoot as number, Number(version.rowId));
+		return "restored";
+	}
+
+	// applyRecord only ever creates key rows; undo removes them.
 	if (row === undefined) return "unchanged";
 	writeVersion(db, undoId, "entity_keys", version.rowId, row, null, now);
 	db.raw()
@@ -408,6 +426,18 @@ function undoType(
 		]);
 		if (differs !== null) {
 			return `type "${String(row.name)}" (${version.rowId}): ${differs}`;
+		}
+		// A parent with live children still attached stays live: archiving
+		// it would orphan the hierarchy (the child revert was skipped
+		// because a later change edited that child).
+		const liveChildren = db
+			.raw()
+			.prepare(
+				"SELECT 1 AS x FROM types WHERE parentId = ? AND archived = 0 LIMIT 1",
+			)
+			.get(Number(version.rowId)) as { x: number } | undefined;
+		if (liveChildren !== undefined) {
+			return `type "${String(row.name)}" (${version.rowId}): live children still attached`;
 		}
 		writeVersion(db, undoId, "types", version.rowId, row, { ...row, archived: 1 }, now);
 		db.raw()

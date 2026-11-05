@@ -3,6 +3,7 @@ import { defineTool, } from "@earendil-works/pi-durable";
 import { audienceCovers } from "./audience.js";
 import { applyRecord } from "./apply.js";
 import { TypeDefSchema } from "./schema.js";
+import { effectiveFields } from "./schema.js";
 import { mirrorEntities } from "./mirror.js";
 const MAX_QUERIES = 10;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -142,7 +143,14 @@ function likeFallback(db, text) {
     return new Set(rows.map((row) => row.id));
 }
 function renderEntity(db, row, now) {
-    const typeFields = JSON.parse(row.typeFields);
+    // Inherited fields carry their defs (horizonDays) down the hierarchy.
+    const typeRows = db
+        .raw()
+        .prepare("SELECT id, parentId, fields FROM types")
+        // SAFETY: the types table columns are fixed by db.ts's schema;
+        // node:sqlite types rows generically.
+        .all();
+    const typeFields = effectiveFields(new Map(typeRows.map((type) => [type.id, type])), row.typeId);
     const fields = JSON.parse(row.fields);
     const lines = [`${row.typeName} — ${row.name}`];
     for (const [name, field] of Object.entries(fields)) {

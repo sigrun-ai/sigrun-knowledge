@@ -9,6 +9,7 @@ import { audienceCovers } from "./audience.js";
 import type { RecordInput } from "./apply.js";
 import { applyRecord } from "./apply.js";
 import { TypeDefSchema } from "./schema.js";
+import { effectiveFields, type TypeHierarchyRow } from "./schema.js";
 import type { KnowledgeDb } from "./db.js";
 import { mirrorEntities } from "./mirror.js";
 
@@ -254,10 +255,17 @@ function renderEntity(
 	row: StoredEntity,
 	now: number,
 ): string {
-	const typeFields = JSON.parse(row.typeFields) as {
-		name: string;
-		horizonDays?: number;
-	}[];
+	// Inherited fields carry their defs (horizonDays) down the hierarchy.
+	const typeRows = db
+		.raw()
+		.prepare("SELECT id, parentId, fields FROM types")
+		// SAFETY: the types table columns are fixed by db.ts's schema;
+		// node:sqlite types rows generically.
+		.all() as unknown as TypeHierarchyRow[];
+	const typeFields = effectiveFields(
+		new Map(typeRows.map((type) => [type.id, type])),
+		row.typeId,
+	);
 	const fields = JSON.parse(row.fields) as Record<string, FieldRecord>;
 	const lines: string[] = [`${row.typeName} — ${row.name}`];
 	for (const [name, field] of Object.entries(fields)) {

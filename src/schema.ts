@@ -164,3 +164,40 @@ export function validateValue(def: FieldDef, value: unknown): string | undefined
 	}
 	return checkScalar(def.type, value);
 }
+
+/** Minimal type row shape the hierarchy helpers need. */
+export interface TypeHierarchyRow {
+	id: number;
+	parentId: number | null;
+	/** Field defs, parsed (FieldDef[]) or still the stored JSON string. */
+	fields: string | FieldDef[];
+}
+
+/**
+ * Effective (own + inherited) field defs for a type: walk the parent
+ * chain root-first; a child field with the same name shadows the
+ * ancestor's def.
+ */
+export function effectiveFields(
+	typesById: Map<number, TypeHierarchyRow>,
+	typeId: number,
+): FieldDef[] {
+	const chain: TypeHierarchyRow[] = [];
+	let current = typesById.get(typeId);
+	while (current !== undefined) {
+		chain.unshift(current);
+		current =
+			current.parentId === null ? undefined : typesById.get(current.parentId);
+	}
+	const byName = new Map<string, FieldDef>();
+	for (const type of chain) {
+		const fields =
+			typeof type.fields === "string"
+				? (JSON.parse(type.fields) as FieldDef[])
+				: type.fields;
+		for (const field of fields) {
+			byName.set(field.name, field);
+		}
+	}
+	return [...byName.values()];
+}

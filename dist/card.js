@@ -1,3 +1,4 @@
+import { effectiveFields } from "./schema.js";
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Parse an observedAt as a date-only string or a full ISO timestamp. */
 function parseObserved(observedAt) {
@@ -25,13 +26,20 @@ function formatField(value) {
 export function renderCard(db, entityId, now) {
     const row = db
         .raw()
-        .prepare(`SELECT e.id, e.name, e.fields, t.fields AS typeFields, t.name AS typeName
+        .prepare(`SELECT e.id, e.name, e.fields, e.typeId, t.name AS typeName
 			 FROM entities e JOIN types t ON t.id = e.typeId WHERE e.id = ?`)
         .get(entityId);
     if (row === undefined) {
         throw new Error(`renderCard: unknown entity "${entityId}"`);
     }
-    const typeFields = JSON.parse(row.typeFields);
+    // Inherited fields carry their defs (horizonDays) down the hierarchy.
+    const typeRows = db
+        .raw()
+        .prepare("SELECT id, parentId, fields FROM types")
+        // SAFETY: the types table columns are fixed by db.ts's schema;
+        // node:sqlite types rows generically.
+        .all();
+    const typeFields = effectiveFields(new Map(typeRows.map((type) => [type.id, type])), row.typeId);
     const fields = JSON.parse(row.fields);
     const sources = new Set();
     const lines = [];

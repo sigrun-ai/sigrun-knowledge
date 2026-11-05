@@ -29,3 +29,16 @@ export declare const TypeDefSchema: TSchema;
  * the value is valid, otherwise a short human-readable error text.
  */
 export declare function validateValue(def: FieldDef, value: unknown): string | undefined;
+/** Minimal type row shape the hierarchy helpers need. */
+export interface TypeHierarchyRow {
+    id: number;
+    parentId: number | null;
+    /** Field defs, parsed (FieldDef[]) or still the stored JSON string. */
+    fields: string | FieldDef[];
+}
+/**
+ * Effective (own + inherited) field defs for a type: walk the parent
+ * chain root-first; a child field with the same name shadows the
+ * ancestor's def.
+ */
+export declare function effectiveFields(typesById: Map<number, TypeHierarchyRow>, typeId: number): FieldDef[];
