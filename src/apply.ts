@@ -665,7 +665,7 @@ function applyEntity(
 		const keyNames = Object.keys(input.keys);
 		db.raw()
 			.prepare(
-				"INSERT INTO entities (id, typeId, name, keys, fields, attributes, indexedAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				"INSERT INTO entities (id, typeId, name, keys, fields, attributes, indexedAt) VALUES (?, ?, ?, ?, ?, ?, NULL)",
 			)
 			.run(
 				id,
@@ -674,7 +674,6 @@ function applyEntity(
 				JSON.stringify(keyNames),
 				JSON.stringify(input.fields),
 				JSON.stringify(input.attributes ?? {}),
-				now,
 			);
 		for (const [key, value] of Object.entries(input.keys)) {
 			insertKey(db, id, rootId, key, value);
@@ -687,7 +686,7 @@ function applyEntity(
 			fields: JSON.stringify(input.fields),
 			attributes: JSON.stringify(input.attributes ?? {}),
 			cls: "normal",
-			indexedAt: now,
+			indexedAt: null,
 			archived: 0,
 		};
 		writeVersion(db, changeId, "entities", id, null, stored, now);
@@ -727,7 +726,10 @@ function applyEntity(
 		keys: JSON.stringify([...storedKeyNames]),
 		fields: JSON.stringify(nextFields),
 		attributes: JSON.stringify(nextAttributes),
-		indexedAt: now,
+		// indexedAt is the mirror's stamp (recall.index succeeded at that
+		// instant): a new version leaves it BEHIND so the next idle pass
+		// retries the index. Never stamped here.
+		indexedAt: existing.indexedAt,
 	};
 	const changed =
 		next.fields !== existing.fields ||
@@ -827,14 +829,15 @@ export function retypeEntities(
 				typeId: target.id,
 				fields: JSON.stringify(kept),
 				attributes: JSON.stringify(attributes),
-				indexedAt: now,
+				// re-typing leaves indexedAt behind: the next idle pass re-indexes.
+				indexedAt: entity.indexedAt,
 			};
 			writeVersion(db, changeId, "entities", entity.id, entity, next, now);
 			db.raw()
 				.prepare(
 					"UPDATE entities SET typeId = ?, fields = ?, attributes = ?, indexedAt = ? WHERE id = ?",
 				)
-				.run(next.typeId, next.fields, next.attributes, now, entity.id);
+				.run(next.typeId, next.fields, next.attributes, next.indexedAt, entity.id);
 			db.raw()
 				.prepare(
 					"UPDATE entity_keys SET typeFamilyRoot = ? WHERE entityId = ?",

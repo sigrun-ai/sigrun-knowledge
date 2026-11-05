@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `src/tools.ts`: `knowledge_record` (target tool, replay-safe, idempotent
+  by call id; inquiry records the reviewed parent conversation through the
+  fork-ancestry paging lookup) and `knowledge_find` (read tool — batched
+  type/field/inquiry/text queries; text via `recall.search` with LIKE
+  fallback; audience rule first; local-only entities never shown).
+- `src/target.ts`: the `knowledge` curation target — guidance, undo
+  (revert + re-mirror), wantsReview/reviewed on the research flag;
+  `maintain` is a no-op placeholder (Task 11).
+- `src/research.ts`: the `afterTool` research flag (`<user
+  state>/research.json`) with the 15-minute single-request window.
+- `src/mirror.ts`: recall mirroring after apply/undo — `recall.index`
+  (kind `record`) or `recall.remove` for archived entities; failure
+  leaves `indexedAt` behind the last version for the idle pass.
+- `src/audience.ts`: the audience rule (private copy of recall's).
+- `src/prompts.ts`: the review guidance bullets.
+
+TODO before release: pin `@sigrun/sigrun` and `@sigrun/shared` to the
+releases carrying published hooks and curation targets.
+
 ## [0.1.0] - 2026-11-04
 
 ### Added

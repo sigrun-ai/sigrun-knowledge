@@ -1,6 +1,9 @@
 import { join } from "node:path";
-import { defineExtension } from "@earendil-works/pi-durable";
+import { defineExtension, hook, ToolTask } from "@earendil-works/pi-durable";
 import { KnowledgeDb } from "./db.js";
+import { createTools } from "./tools.js";
+import { createTarget } from "./target.js";
+import { createResearch } from "./research.js";
 /**
  * The loader injects the host only when factory.length > 0: keep the host
  * bare and the optional test dependencies second, so the arity stays one.
@@ -17,9 +20,27 @@ export default function createKnowledge(host, deps = {}) {
         }
         return database;
     }
+    const now = deps.now ?? Date.now;
+    const tools = createTools({ host, dbForUser, now });
+    const target = createTarget({ host, dbForUser, now });
+    const researchFlag = createResearch({
+        conversationMeta: (id) => host.conversations.meta(id),
+        userStateDir: (user) => host.stores.user(user).paths.state,
+        userSettings: (user) => host.stores.user(user).settings.get(),
+        now,
+    });
     const result = {
-        extension: defineExtension({ name: "@sigrun/knowledge" }),
+        extension: defineExtension({
+            name: "@sigrun/knowledge",
+            tools,
+            hooks: [
+                hook(ToolTask, {
+                    afterTool: async (call, toolResult, api) => researchFlag(call, toolResult, api, undefined),
+                }),
+            ],
+        }),
         dbForUser,
+        curationTargets: [target],
         harnessShutdown: () => {
             for (const database of databases.values()) {
                 database.close();
