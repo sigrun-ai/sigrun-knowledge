@@ -11,6 +11,7 @@ import type { KnowledgeDb } from "./db.js";
 import { mirrorEntities, type MirrorHost } from "./mirror.js";
 import { retypeEntities } from "./apply.js";
 import type { FieldDef, TypeDef } from "./schema.js";
+import { TYPE_NAME_PATTERN } from "./schema.js";
 
 const REINDEX_LIMIT = 50;
 const RETYPE_LIMIT = 50;
@@ -397,8 +398,12 @@ export async function maintain(
 		return { changes, ...(more ? { more: true } : {}) };
 	}
 	// The answer must not rename onto an existing type (hierarchy would
-	// silently merge families); decline in that case.
-	if (types.some((type) => type.name === answer.name)) {
+	// silently merge families) and must be a valid type name; decline
+	// in either case.
+	if (
+		types.some((type) => type.name === answer.name) ||
+		!TYPE_NAME_PATTERN.test(answer.name)
+	) {
 		rememberDeclined(db, groupKey(best.group.map((type) => type.name)), deps.now());
 		return { changes, ...(more ? { more: true } : {}) };
 	}
@@ -507,7 +512,17 @@ export async function maintain(
 	const batch = foldedEntities.slice(0, RETYPE_LIMIT);
 	const rest = foldedEntities.slice(RETYPE_LIMIT);
 	if (batch.length > 0) {
-		retypeEntities(db, batch, answer.name, changeId, now);
+		try {
+			retypeEntities(db, batch, answer.name, changeId, now);
+		} catch (error) {
+			// A re-type can fail when two sibling roots co-held the same
+			// identity key (the family-root UNIQUE constraint collides at
+			// the new parent). Keep the full remainder for the next pass
+			// rather than dropping the hierarchy half-applied.
+			console.error("knowledge: fold re-type failed", error);
+			saveContinuation(db, changeId, answer.name, foldedEntities, deps.now());
+			return { changes, more: true };
+		}
 		await mirrorEntities(deps.host, db, user, batch, deps.now());
 	}
 	if (rest.length > 0) {
