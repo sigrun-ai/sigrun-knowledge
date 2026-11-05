@@ -77,6 +77,66 @@ function rememberDeclined(db, key, now) {
         .prepare("INSERT INTO maintenance (kind, changeId, payload, cursor, at) VALUES ('declined-generalization', NULL, ?, NULL, ?)")
         .run(JSON.stringify({ group: key }), now);
 }
+/** node:sqlite reports a UNIQUE violation as a message match. */
+function isUniqueKeyViolation(error) {
+    return (error instanceof Error &&
+        /UNIQUE constraint failed/.test(error.message) &&
+        error.message.includes("entity_keys"));
+}
+/**
+ * Drop the entity's key rows whose (key, normalized) already exists at
+ * the target family's root — the normalized identity is already keyed
+ * there, so our row is a duplicate. Each drop is versioned (before,
+ * after null) so undo can restore it. Returns true when every
+ * conflicting row was dropped.
+ */
+function dropConflictingKeys(db, entityId, targetTypeName, changeId, now) {
+    // Resolve the target family's root id.
+    const rootRow = db
+        .raw()
+        .prepare("SELECT id, parentId FROM types WHERE name = ? AND archived = 0")
+        .get(targetTypeName);
+    if (rootRow === undefined)
+        return false;
+    let rootId = rootRow.id;
+    let guard = 0;
+    while (guard++ < 32) {
+        const next = db
+            .raw()
+            .prepare("SELECT id, parentId FROM types WHERE id = ?")
+            .get(rootId);
+        if (next === undefined || next.parentId === null)
+            break;
+        rootId = next.parentId;
+    }
+    const mine = db
+        .raw()
+        .prepare("SELECT id, entityId, typeFamilyRoot, key, normalized FROM entity_keys WHERE entityId = ?")
+        .all(entityId);
+    for (const keyRow of mine) {
+        const collision = db
+            .raw()
+            .prepare("SELECT id FROM entity_keys WHERE typeFamilyRoot = ? AND key = ? AND normalized = ? AND id != ?")
+            .get(rootId, keyRow.key, keyRow.normalized, keyRow.id);
+        if (collision === undefined)
+            continue;
+        writeVersion(db, changeId, "entity_keys", String(keyRow.id), keyRow, null, now);
+        db.raw()
+            .prepare("DELETE FROM entity_keys WHERE id = ?")
+            .run(keyRow.id);
+        // Point the colliding row at our entity so the retype's re-root
+        // no-ops instead of violating UNIQUE.
+        const collidingRow = db
+            .raw()
+            .prepare("SELECT id, entityId, typeFamilyRoot, key, normalized FROM entity_keys WHERE id = ?")
+            .get(collision.id);
+        writeVersion(db, changeId, "entity_keys", String(collidingRow.id), collidingRow, { ...collidingRow, entityId }, now);
+        db.raw()
+            .prepare("UPDATE entity_keys SET entityId = ? WHERE id = ?")
+            .run(entityId, collidingRow.id);
+    }
+    return true;
+}
 function loadContinuation(db) {
     const row = db
         .raw()
@@ -257,7 +317,7 @@ export async function maintain(user, ctx, budget, deps) {
     if (continuation !== undefined) {
         const batch = continuation.remaining.slice(0, RETYPE_LIMIT);
         const rest = continuation.remaining.slice(RETYPE_LIMIT);
-        let failed = [];
+        const failed = [];
         if (batch.length > 0) {
             const typeExists = db
                 .raw()
@@ -276,22 +336,36 @@ export async function maintain(user, ctx, budget, deps) {
             }
             catch (error) {
                 // One bad row (a key collision with the new family root)
-                // must not block the other 49: retry per entity and park
-                // only the failing ids.
+                // must not block the other 49: retry per entity.
                 console.error("knowledge: continuation re-type batch failed", error);
                 for (const entityId of batch) {
                     try {
                         retypeEntities(db, [entityId], continuation.parentType, continuation.changeId, deps.now());
                     }
                     catch (single) {
-                        console.error(`knowledge: re-type of entity ${entityId} failed`, single);
-                        failed.push(entityId);
+                        // The entity must not park the continuation forever.
+                        // A key collision with a row already at the new root
+                        // (same normalized identity, e.g. another folded
+                        // sibling's entity) resolves by dropping OUR duplicate
+                        // key row (versioned, mirroring the step-4 retyped
+                        // loop) and retrying. Any other failure removes the
+                        // entity from the continuation with a log line.
+                        if (!isUniqueKeyViolation(single) || !dropConflictingKeys(db, entityId, continuation.parentType, continuation.changeId, deps.now())) {
+                            console.error(`knowledge: re-type of entity ${entityId} failed; removing it from the continuation`, single);
+                            continue;
+                        }
+                        try {
+                            retypeEntities(db, [entityId], continuation.parentType, continuation.changeId, deps.now());
+                        }
+                        catch (retry) {
+                            console.error(`knowledge: re-type of entity ${entityId} failed after key drop; removing it from the continuation`, retry);
+                        }
                     }
                 }
             }
             await mirrorEntities(deps.host, db, user, batch.filter((id) => !failed.includes(id)), deps.now());
         }
-        const remaining = [...rest, ...failed];
+        const remaining = rest;
         if (remaining.length > 0) {
             saveContinuation(db, continuation.changeId, continuation.parentType, remaining, deps.now());
             more = true;
@@ -456,11 +530,21 @@ export async function maintain(user, ctx, budget, deps) {
                     .get(parentId, keyRow.key, keyRow.normalized, keyRow.id);
                 if (collision !== undefined) {
                     // Same normalized identity already keyed at the new root:
-                    // the child's row is a duplicate; drop it (versioned).
+                    // the child's row is a duplicate; drop it (versioned) and
+                    // point the colliding row at our entity so the fold's
+                    // retype re-rooting no-ops instead of violating UNIQUE.
                     writeVersion(db, changeId, "entity_keys", String(keyRow.id), keyRow, null, now);
                     db.raw()
                         .prepare("DELETE FROM entity_keys WHERE id = ?")
                         .run(keyRow.id);
+                    const collidingRow = db
+                        .raw()
+                        .prepare("SELECT id, entityId, typeFamilyRoot, key, normalized FROM entity_keys WHERE id = ?")
+                        .get(collision.id);
+                    writeVersion(db, changeId, "entity_keys", String(collidingRow.id), collidingRow, { ...collidingRow, entityId: keyRow.entityId }, now);
+                    db.raw()
+                        .prepare("UPDATE entity_keys SET entityId = ? WHERE id = ?")
+                        .run(keyRow.entityId, collidingRow.id);
                     continue;
                 }
                 writeVersion(db, changeId, "entity_keys", String(keyRow.id), keyRow, { ...keyRow, typeFamilyRoot: parentId }, now);

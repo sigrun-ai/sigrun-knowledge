@@ -831,6 +831,164 @@ describe("knowledge idle pass (maintain)", () => {
 		).toEqual({ n: 3 });
 	});
 
+	it("a colliding entity's key row is dropped (versioned) so the continuation drains and a later pass reaches step 3", async () => {
+		fake = fakeHost({
+			hooks: {
+				"recall.index": (payload: unknown) => ({
+					status: "ok",
+					provider: "recall",
+					value: {
+						handle: `d:${(payload as { id: string }).id}`,
+						class: "normal",
+						changed: true,
+					},
+				}),
+			},
+		});
+		const db = KnowledgeDb.open(":memory:");
+		const target = createTarget({
+			host: fake.host as never,
+			dbForUser: () => db,
+			now: () => NOW,
+		});
+		// Two sibling types, each with an entity sharing the same phone
+		// key but as SEPARATE entities (no cross-family match at record
+		// time). After a fold both entities land at the parent root and
+		// the second one's key row collides.
+		applyRecord(
+			db,
+			{
+				types: [
+					{
+						name: "walk-in clinic",
+						description: "A walk-in clinic.",
+						fields: [
+							{ name: "phone", type: "string", identity: true },
+							{ name: "city", type: "string" },
+						],
+					},
+					{
+						name: "vet clinic",
+						description: "A vet clinic.",
+						fields: [
+							{ name: "phone", type: "string", identity: true },
+							{ name: "city", type: "string" },
+							{ name: "species", type: "string" },
+						],
+					},
+					{
+						name: "dental clinic",
+						description: "A dental clinic.",
+						fields: [
+							{ name: "phone", type: "string", identity: true },
+							{ name: "city", type: "string" },
+							{ name: "services", type: "string" },
+						],
+					},
+				],
+				entities: [
+					{
+						type: "walk-in clinic",
+						name: "Downtown Walk-In",
+						keys: { phone: "555-0300" },
+						fields: {},
+					},
+					{
+						type: "vet clinic",
+						name: "Northside Vet",
+						keys: { phone: "555-0300" },
+						fields: {},
+					},
+				],
+			},
+			{ callId: "seed-collide", now: NOW },
+		);
+		// Force a >50 continuation by seeding 51 more foldable entities on
+		// walk-in clinic (so pass 1 leaves a continuation, pass 2 drains).
+		const extras = [];
+		for (let i = 0; i < 51; i++) {
+			extras.push({
+				type: "walk-in clinic",
+				name: `Walk-In ${i}`,
+				keys: { phone: `555-${String(4000 + i)}` },
+				fields: {},
+			});
+		}
+		applyRecord(db, { entities: extras.slice(0, 50) }, { callId: "seed-x1", now: NOW });
+		applyRecord(db, { entities: extras.slice(50) }, { callId: "seed-x2", now: NOW });
+
+		const generalize = completed(
+			JSON.stringify({
+				general: true,
+				name: "clinic",
+				description: "A clinic.",
+				fields: [
+					{ name: "phone", type: "string" },
+					{ name: "city", type: "string" },
+				],
+			}),
+		);
+		// Pass 1: generalize + fold 50, leave continuation.
+		const { budget: b1 } = scriptBudget([generalize]);
+		const first = await target.maintain!(USER, {} as never, b1);
+		expect(first.more).toBe(true);
+
+		// Pass 2: per-entity retry drops the colliding key row. 52 foldable
+		// entities = 50 + 2, so one more continuation pass follows.
+		const { budget: b2, runs: r2 } = scriptBudget([]);
+		const second = await target.maintain!(USER, {} as never, b2);
+		expect(r2).toHaveLength(0);
+		expect(second.more).toBe(true);
+
+		// Pass 3: drains the continuation. "Northside Vet" collided with
+		// "Downtown Walk-In" (both keyed 555-0300 at the new root) — its
+		// key row was dropped in pass 2, its retype succeeded.
+		const { budget: b2b, runs: r2b } = scriptBudget([]);
+		const drained = await target.maintain!(USER, {} as never, b2b);
+		expect(r2b).toHaveLength(0);
+		expect(drained.more).toBeUndefined();
+		const parent = typeRow(db, "clinic");
+		// All foldable entities re-typed (52 walk-in entities).
+		expect(entityRows(db, parent.id).length).toBe(52);
+		// The colliding key row was adopted by the surviving entity of the
+		// pair (the duplicate row dropped, versioned under the change);
+		// whichever of the pair retyped second owns it.
+		const pairKeys = db
+			.raw()
+			.prepare(
+				"SELECT k.id, e.name FROM entity_keys k JOIN entities e ON e.id = k.entityId WHERE k.normalized = '5550300'",
+			)
+			.all() as { id: number; name: string }[];
+		expect(pairKeys).toHaveLength(1);
+		expect(["Northside Vet", "Downtown Walk-In"]).toContain(pairKeys[0]!.name);
+		const dropped = db
+			.raw()
+			.prepare(
+				`SELECT COUNT(*) AS n FROM versions WHERE "table" = 'entity_keys' AND after IS NULL AND changeId = ?`,
+			)
+			.get(first.changes[0]!.changeId) as { n: number };
+		expect(dropped.n).toBe(1);
+
+		// Pass 4: continuation drained — step 3 runs again (seed a fresh
+		// triple: the two remaining kept children have < 3 siblings).
+		applyRecord(
+			db,
+			{
+				types: [
+					{ name: "bakery", description: "A bakery.", fields: [{ name: "phone", type: "string", identity: true }, { name: "city", type: "string" }] },
+					{ name: "cafe", description: "A cafe.", fields: [{ name: "phone", type: "string", identity: true }, { name: "city", type: "string" }] },
+					{ name: "deli", description: "A deli.", fields: [{ name: "phone", type: "string", identity: true }, { name: "city", type: "string" }] },
+				],
+				entities: [],
+			},
+			{ callId: "seed-triple", now: NOW },
+		);
+		const { budget: b3, runs: r3 } = scriptBudget([completed('{"general": false}')]);
+		const third = await target.maintain!(USER, {} as never, b3);
+		expect(r3).toHaveLength(1);
+		expect(third.changes).toHaveLength(0);
+	});
+
 	it("pending re-index entities are mirrored first", async () => {
 		const { db, target } = setup([]);
 		const seeded = seedSiblings(db);
