@@ -70,7 +70,10 @@ const HOST_MODULE_PINS = {
 	"@earendil-works/pi-durable": "1.4.0",
 	"@earendil-works/pi-ai": "1.4.0",
 	"@earendil-works/chord": "1.4.0",
-	"@sigrun/shared": "0.5.0",
+	// The accepted shared range: every line since the value imports
+	// landed (accessOf), through the current 0.8.0 (recall's 0.1.5 made
+	// the same widening; a bare "0.5.0" pinned the FIRST line only).
+	"@sigrun/shared": "0.5.0 || 0.6.0 || 0.6.1 || 0.7.0 || 0.8.0",
 };
 const peers = manifest.peerDependencies ?? {};
 const devDeps = manifest.devDependencies ?? {};
