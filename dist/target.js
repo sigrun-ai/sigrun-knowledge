@@ -1,5 +1,6 @@
 import { undoChange } from "./undo.js";
 import { mirrorEntities } from "./mirror.js";
+import { maintain } from "./maintain.js";
 import { guidance } from "./prompts.js";
 import { requestReview, clearReview } from "./research.js";
 /**
@@ -23,10 +24,6 @@ export function createTarget(deps) {
         reviewed: (user, id) => {
             clearReview(deps.host.stores.user(user).paths.state, id);
         },
-        // Task 11 wires the idle pass: re-index pending entities and
-        // generalize sibling types. Deliberately a no-op for now — the
-        // target works without it (research-triggered reviews and undo are
-        // the live surfaces).
-        maintain: async () => ({ changes: [] }),
+        maintain: (user, ctx, budget) => maintain(user, ctx, budget, deps),
     };
 }

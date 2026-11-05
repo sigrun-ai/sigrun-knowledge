@@ -56,9 +56,15 @@ export function undoChange(db, changeId, now) {
                     break;
                 }
                 case "types": {
-                    // Type rows are shared schema, not records: their versions
-                    // exist for audit, but undo never rewrites schema.
-                    skipped.push(`type ${version.rowId}: type schema changes are not reverted`);
+                    // Type rows are shared schema: undo restores them only while
+                    // the row still equals what the change wrote (a later
+                    // extension of the type blocks the revert, not other
+                    // types). A type the change created is archived in turn.
+                    const outcome = undoType(db, version, undoId, now);
+                    if (outcome === "restored")
+                        restored += 1;
+                    else if (outcome !== "unchanged")
+                        skipped.push(outcome);
                     break;
                 }
                 case "entity_keys": {
@@ -238,5 +244,68 @@ function undoEntityKey(db, version, undoId, now) {
     db.raw()
         .prepare("DELETE FROM entity_keys WHERE id = ?")
         .run(Number(version.rowId));
+    return "restored";
+}
+/**
+ * Undo a type version: a type the change created is archived (while the
+ * row still equals the creation blob); a type the change edited gets its
+ * parentId/fields/description back (while the row still equals the
+ * change's after). Edits from a later change to the same row block the
+ * revert; other rows are never consulted (a type's schema is its own
+ * row, so undoing a generalization after a child was extended reverts
+ * the child alone).
+ */
+function undoType(db, version, undoId, now) {
+    // Schema rows written by knowledge_record are shared schema and stay
+    // audit-only; only the idle pass's own hierarchy edits (change ids
+    // prefixed "maintain:") are reverted, so a generalization is
+    // undoable without record-applied types ever being rewritten.
+    if (!version.changeId.startsWith("maintain:")) {
+        return `type ${version.rowId}: type schema changes are not reverted`;
+    }
+    const row = db
+        .raw()
+        .prepare("SELECT id, name, description, parentId, fields, version, archived FROM types WHERE id = ?")
+        .get(Number(version.rowId));
+    if (row === undefined)
+        return "unchanged";
+    if (version.before === null) {
+        // Created by this change: archive it (schema rows are never
+        // deleted) while the row still equals the creation blob.
+        if (Number(row.archived) !== 0)
+            return "unchanged";
+        const afterCreate = JSON.parse(version.after ?? "null");
+        const differs = afterDiffersFromRow(afterCreate, row, [
+            "name",
+            "description",
+            "parentId",
+            "fields",
+        ]);
+        if (differs !== null) {
+            return `type "${String(row.name)}" (${version.rowId}): ${differs}`;
+        }
+        writeVersion(db, undoId, "types", version.rowId, row, { ...row, archived: 1 }, now);
+        db.raw()
+            .prepare("UPDATE types SET archived = 1, version = version + 1 WHERE id = ?")
+            .run(Number(version.rowId));
+        return "restored";
+    }
+    const before = JSON.parse(version.before ?? "null");
+    const after = JSON.parse(version.after ?? "null");
+    const differs = afterDiffersFromRow(after, row, [
+        "name",
+        "description",
+        "parentId",
+        "fields",
+        "archived",
+    ]);
+    if (before === null || after === null || differs !== null) {
+        return `type "${String(row.name)}" (${version.rowId}): ${differs ?? "changed by a later change"}`;
+    }
+    const restoredRow = { ...row, ...before, id: row.id };
+    writeVersion(db, undoId, "types", version.rowId, row, restoredRow, now);
+    db.raw()
+        .prepare("UPDATE types SET description = ?, parentId = ?, fields = ?, archived = ?, version = version + 1 WHERE id = ?")
+        .run(restoredRow.description, restoredRow.parentId ?? null, restoredRow.fields, Number(restoredRow.archived ?? 0), Number(version.rowId));
     return "restored";
 }
