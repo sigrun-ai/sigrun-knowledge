@@ -48,7 +48,16 @@ The factory result declares one target:
 - `undo` — reverts a change (row-level equality: only rows still equal to
   what the change wrote are restored) and re-mirrors every touched entity.
 - `wantsReview` / `reviewed` — drive the research flag (below).
-- `maintain` — placeholder, no-op for now (the idle pass lands in Task 11).
+- `maintain` — the idle pass: re-indexes up to 50 pending or
+  horizon-stale entities (mirroring them into recall), continues an
+  unfinished re-typing before proposing anything new, and proposes at
+  most ONE generalization per pass — ≥ 3 sibling types whose field
+  names overlap (pairwise Jaccard ≥ 0.5) become children of a new shared
+  parent type; a child left with no distinct fields is folded (its
+  entities re-typed, ≤ 50 per pass, extra values preserved in
+  `attributes`); identity-key rows re-root (versioned) so records keep
+  merging; declined groups are remembered for 30 days. The digest-run
+  budget bounds the pass and its runs.
 
 ## The research trigger
 
