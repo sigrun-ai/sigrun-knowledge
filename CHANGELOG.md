@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- peer pi-durable/pi-ai/chord ~1.5.0 (requires sigrun 0.10.0).
+
+### Fixed
+
+- afterTool skips results of calls that never ran (pi-durable 1.5.0 hook semantics).
+
+
 ### Added
 
 - Everything below, released as 0.1.0: the full knowledge extension —
