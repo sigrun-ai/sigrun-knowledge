@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { ToolHookCall, ToolExecutionResult } from "@earendil-works/pi-durable";
 
 import { matchesGlob, resolveUserSettings } from "./config.js";
+import { toolExecuted } from "./tool-executed.js";
 
 /**
  * The per-conversation "researched since last review" flag, per user:
@@ -65,6 +66,10 @@ export function createResearch(deps: ResearchDeps) {
 		api: { conversationId: number },
 		_context: unknown,
 	): Promise<undefined> {
+		// pi-durable 1.5.0 (spec §3.2-b): the harness runs afterTool on
+		// results IT wrote for calls that never executed — no research
+		// happened, so nothing is stamped.
+		if (!toolExecuted(_result)) return undefined;
 		try {
 			const meta = await deps.conversationMeta(api.conversationId);
 			if (meta.internal === true || meta.owner === undefined) return undefined;
