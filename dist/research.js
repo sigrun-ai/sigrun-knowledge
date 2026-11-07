@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { matchesGlob, resolveUserSettings } from "./config.js";
+import { toolExecuted } from "./tool-executed.js";
 /** The window a queued review suppresses duplicate requests. */
 export const RESEARCH_WINDOW_MS = 15 * 60 * 1000;
 export function readResearchFlags(stateDir) {
@@ -26,6 +27,11 @@ function writeResearchFlags(stateDir, flags) {
  */
 export function createResearch(deps) {
     return async function afterTool(call, _result, api, _context) {
+        // pi-durable 1.5.0 (spec §3.2-b): the harness runs afterTool on
+        // results IT wrote for calls that never executed — no research
+        // happened, so nothing is stamped.
+        if (!toolExecuted(_result))
+            return undefined;
         try {
             const meta = await deps.conversationMeta(api.conversationId);
             if (meta.internal === true || meta.owner === undefined)

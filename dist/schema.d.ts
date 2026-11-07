@@ -1,4 +1,4 @@
-import { type TSchema } from "@earendil-works/pi-ai";
+import { type TSchema } from "typebox";
 export type FieldType = "string" | "number" | "boolean" | "date" | "url" | "money" | "enum" | "list";
 export interface FieldDef {
     name: string;
