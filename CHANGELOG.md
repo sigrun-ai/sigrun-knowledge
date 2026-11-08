@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.2] - 2026-11-07
 
-## [Unreleased]
+## [0.1.3] - 2026-11-07
 
 ### Added
 
@@ -26,8 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - afterTool skips results of calls that never ran (pi-durable 1.5.0 hook semantics).
 
-
-### Added
+### Also in this line (0.1.0 content, restated)
 
 - Everything below, released as 0.1.0: the full knowledge extension —
   store, atomic versioned apply/undo, tools, the curation target, the
