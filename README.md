@@ -73,6 +73,20 @@ hook never alters tool results.
 The glob list is the per-user `researchTools` setting (`*` is the only
 wildcard), e.g. `["searxng/search*", "web_fetch"]`.
 
+## Knowledge view
+
+The factory contributes a read-only **Knowledge** view. Its sidebar lists the
+type hierarchy and inquiries; type pages show effective fields and searchable
+entities, and entity pages show cited field values, normalized identity keys,
+attributes, inquiry roles, and up to 20 history diffs. Inquiry pages link back
+to their conversations. A page action reveals archived types and inquiries;
+archived entities remain hidden.
+
+The view opens only the calling principal's `knowledge.db`, and only when that
+file already exists, so browsing never creates a store. Anonymous principals
+have no access. Local-only entities are visible in this private owner view
+with a `local-only` badge; they remain excluded from `knowledge_find`.
+
 ## Recall mirroring (optional dependency)
 
 After each apply or undo, every touched entity is mirrored into recall

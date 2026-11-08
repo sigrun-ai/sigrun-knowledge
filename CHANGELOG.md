@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.2] - 2026-11-07
 
-## [Unreleased]
+## [0.1.3] - 2026-11-07
+
+### Added
+
+- Read-only Knowledge view: type hierarchy, searchable entities, entity details
+  and history, inquiries, conversation links, and an archived-type/inquiry
+  toggle. Type pages identify and describe the selected type, inquiry details
+  include dates, archived types are badged, and the search box retains the
+  applied query. Views are scoped to the calling principal and never create a
+  store.
 
 ### Changed
 
@@ -17,8 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - afterTool skips results of calls that never ran (pi-durable 1.5.0 hook semantics).
 
-
-### Added
+### Also in this line (0.1.0 content, restated)
 
 - Everything below, released as 0.1.0: the full knowledge extension —
   store, atomic versioned apply/undo, tools, the curation target, the

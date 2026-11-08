@@ -7,10 +7,12 @@ import { KnowledgeDb } from "./db.js";
 import { createTools } from "./tools.js";
 import { createTarget } from "./target.js";
 import { createResearch } from "./research.js";
+import { createKnowledgeView } from "./view.js";
 
 export interface FactoryDeps {
 	openDb?: (path: string) => KnowledgeDb;
 	now?: () => number;
+	storePath?: (user: string) => string;
 }
 
 /**
@@ -24,12 +26,13 @@ export default function createKnowledge(
 	// One store per directory user, opened on first use. Core does not
 	// create paths.data; KnowledgeDb.open creates its parent.
 	const databases = new Map<string, KnowledgeDb>();
+	const pathOf =
+		deps.storePath ??
+		((user: string) => join(host.stores.user(user).paths.data, "knowledge.db"));
 	function dbForUser(user: string): KnowledgeDb {
 		let database = databases.get(user);
 		if (database === undefined) {
-			database = (deps.openDb ?? KnowledgeDb.open)(
-				join(host.stores.user(user).paths.data, "knowledge.db"),
-			);
+			database = (deps.openDb ?? KnowledgeDb.open)(pathOf(user));
 			databases.set(user, database);
 		}
 		return database;
@@ -58,6 +61,9 @@ export default function createKnowledge(
 			],
 		}),
 		dbForUser,
+		surfaces: {
+			views: [createKnowledgeView({ host, dbForUser, storePath: pathOf, now })],
+		},
 		curationTargets: [target],
 		harnessShutdown: () => {
 			for (const database of databases.values()) {

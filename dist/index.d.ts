@@ -3,6 +3,7 @@ import { KnowledgeDb } from "./db.js";
 export interface FactoryDeps {
     openDb?: (path: string) => KnowledgeDb;
     now?: () => number;
+    storePath?: (user: string) => string;
 }
 /**
  * The loader injects the host only when factory.length > 0: keep the host
