@@ -7,10 +7,12 @@ import { KnowledgeDb } from "./db.js";
 import { createTools } from "./tools.js";
 import { createTarget } from "./target.js";
 import { createResearch } from "./research.js";
+import { createKnowledgeView } from "./view.js";
 
 export interface FactoryDeps {
 	openDb?: (path: string) => KnowledgeDb;
 	now?: () => number;
+	storePath?: (user: string) => string;
 }
 
 /**
@@ -36,6 +38,9 @@ export default function createKnowledge(
 	}
 
 	const now = deps.now ?? Date.now;
+	const storePath =
+		deps.storePath ??
+		((user: string) => join(host.stores.user(user).paths.data, "knowledge.db"));
 
 	const tools = createTools({ host, dbForUser, now });
 	const target = createTarget({ host, dbForUser, now });
@@ -58,6 +63,9 @@ export default function createKnowledge(
 			],
 		}),
 		dbForUser,
+		surfaces: {
+			views: [createKnowledgeView({ host, dbForUser, storePath, now })],
+		},
 		curationTargets: [target],
 		harnessShutdown: () => {
 			for (const database of databases.values()) {

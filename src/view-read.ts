@@ -168,12 +168,23 @@ export function typeTree(
 	return roots;
 }
 
+/** Effective field definitions for a type, including archived ancestors. */
+export function effectiveTypeFields(
+	db: DatabaseSync,
+	typeId: number,
+): readonly FieldDef[] {
+	return effectiveFields(
+		new Map(types(db, true).map((type) => [type.id, type as TypeHierarchyRow])),
+		typeId,
+	);
+}
+
 export function entitiesOfType(
 	db: DatabaseSync,
 	typeId: number,
 	opts: { search: string; limit: number },
 ): readonly EntityRow[] {
-	const family = descendantIds(types(db), typeId);
+	const family = descendantIds(types(db, true), typeId);
 	// SAFETY: fixed schema columns; search is bound and escaped.
 	const rows = db
 		.prepare(
@@ -253,11 +264,7 @@ export function entityDetail(
 		| undefined;
 	if (row === undefined) return undefined;
 
-	const typeRows = types(db);
-	const fields = effectiveFields(
-		new Map(typeRows.map((type) => [type.id, type as TypeHierarchyRow])),
-		row.typeId,
-	);
+	const fields = effectiveTypeFields(db, row.typeId);
 	const fieldViews = Object.entries(
 		JSON.parse(row.fields) as Record<string, FieldRecord>,
 	).map(([name, field]) => {

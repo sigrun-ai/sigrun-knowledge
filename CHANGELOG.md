@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Read-only Knowledge view: type hierarchy, searchable entities, entity details
+  and history, inquiries, conversation links, and an archived-type/inquiry
+  toggle. Views are scoped to the calling principal and never create a store.
+
 ### Changed
 
 - peer pi-durable/pi-ai/chord ~1.5.0 (requires sigrun 0.11.0).

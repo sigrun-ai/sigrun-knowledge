@@ -4,6 +4,7 @@ import { KnowledgeDb } from "./db.js";
 import { createTools } from "./tools.js";
 import { createTarget } from "./target.js";
 import { createResearch } from "./research.js";
+import { createKnowledgeView } from "./view.js";
 /**
  * The loader injects the host only when factory.length > 0: keep the host
  * bare and the optional test dependencies second, so the arity stays one.
@@ -21,6 +22,8 @@ export default function createKnowledge(host, deps = {}) {
         return database;
     }
     const now = deps.now ?? Date.now;
+    const storePath = deps.storePath ??
+        ((user) => join(host.stores.user(user).paths.data, "knowledge.db"));
     const tools = createTools({ host, dbForUser, now });
     const target = createTarget({ host, dbForUser, now });
     const researchFlag = createResearch({
@@ -40,6 +43,9 @@ export default function createKnowledge(host, deps = {}) {
             ],
         }),
         dbForUser,
+        surfaces: {
+            views: [createKnowledgeView({ host, dbForUser, storePath, now })],
+        },
         curationTargets: [target],
         harnessShutdown: () => {
             for (const database of databases.values()) {
