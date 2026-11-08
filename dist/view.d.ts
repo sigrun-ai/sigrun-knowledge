@@ -10,8 +10,6 @@ export interface KnowledgeViewDeps {
     readonly dbForUser: (user: string) => KnowledgeDb;
     readonly storePath: (user: string) => string;
     readonly now: () => number;
-    /** Test seam for in-memory stores; production checks storePath on disk. */
-    readonly storeExists?: (user: string) => boolean;
 }
 /** The view surface, over the factory's per-user database opener. */
 export declare function createKnowledgeView(deps: KnowledgeViewDeps): SurfaceDef<"view">;

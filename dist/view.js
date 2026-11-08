@@ -46,18 +46,21 @@ export function createKnowledgeView(deps) {
         if (user === undefined)
             return { data: emptyData(paramsOf(ctx)), access: "none" };
         const params = paramsOf(ctx);
-        if (!(deps.storeExists ?? ((who) => existsSync(deps.storePath(who))))(user)) {
+        if (!existsSync(deps.storePath(user))) {
             return { data: emptyData(params), access: "write" };
         }
         const db = deps.dbForUser(user).raw();
         const entity = params.entity === undefined ? undefined : entityDetail(db, params.entity, deps.now());
         const inquiryRows = inquiries(db, { includeArchived: params.archived === true });
+        const types = typeTree(db, { includeArchived: params.archived === true });
+        const selectedType = params.type === undefined ? undefined : findType(types, params.type);
         return {
             // "write" permits the edit-shaped drill-in dispatches; handlers
             // only navigate and the data layer remains strictly read-only.
             access: "write",
             data: {
-                types: typeTree(db, { includeArchived: params.archived === true }),
+                types,
+                ...(selectedType === undefined ? {} : { selectedType }),
                 entities: params.type === undefined
                     ? []
                     : entitiesOfType(db, params.type, { search: params.q ?? "", limit: 200 }),
@@ -156,6 +159,16 @@ export function createKnowledgeView(deps) {
 function emptyData(params) {
     return { types: [], entities: [], inquiries: [], params };
 }
+function findType(nodes, id) {
+    for (const node of nodes) {
+        if (node.id === id)
+            return node;
+        const found = findType(node.children, id);
+        if (found !== undefined)
+            return found;
+    }
+    return undefined;
+}
 function flattenTypes(nodes, depth = 0) {
     return nodes.flatMap((node) => [
         {
@@ -180,7 +193,11 @@ function viewTree(data, access) {
                 { id: "inquiries", title: "Inquiries" },
             ],
             onActivate: { type: "edit", name: "openType" },
-            item: { title: { $: "./title" }, meta: [{ text: { $: "./meta" } }] },
+            item: {
+                title: { $: "./title" },
+                meta: [{ text: { $: "./meta" } }],
+                badges: [{ text: { $: "./archived" }, tone: "neutral" }],
+            },
         },
     ];
     const main = [];
@@ -230,7 +247,17 @@ function withoutArchived(params) {
     return rest;
 }
 function typeBlocks(data) {
+    if (data.selectedType === undefined)
+        return [{ type: "markdown", text: "Not found" }];
     return [
+        {
+            type: "fields",
+            id: "type-summary",
+            rows: [
+                { label: "Type", value: data.selectedType.name },
+                { label: "Description", value: data.selectedType.description },
+            ],
+        },
         {
             type: "fields",
             id: "fields",
@@ -257,7 +284,7 @@ function typeBlocks(data) {
         {
             type: "form",
             id: "search",
-            bind: "/search",
+            bind: "/params",
             mode: "submit",
             onSubmit: "search",
             submitLabel: "Search",
@@ -362,6 +389,8 @@ function inquiryBlocks(inquiry) {
                 { label: "Question", value: inquiry.question },
                 { label: "Why", value: inquiry.why ?? "" },
                 { label: "Outcome", value: inquiry.outcome ?? "" },
+                { label: "Started", value: new Date(inquiry.startedAt).toISOString() },
+                { label: "Last touched", value: new Date(inquiry.touchedAt).toISOString() },
             ],
         },
         {

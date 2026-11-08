@@ -26,21 +26,19 @@ export default function createKnowledge(
 	// One store per directory user, opened on first use. Core does not
 	// create paths.data; KnowledgeDb.open creates its parent.
 	const databases = new Map<string, KnowledgeDb>();
+	const pathOf =
+		deps.storePath ??
+		((user: string) => join(host.stores.user(user).paths.data, "knowledge.db"));
 	function dbForUser(user: string): KnowledgeDb {
 		let database = databases.get(user);
 		if (database === undefined) {
-			database = (deps.openDb ?? KnowledgeDb.open)(
-				join(host.stores.user(user).paths.data, "knowledge.db"),
-			);
+			database = (deps.openDb ?? KnowledgeDb.open)(pathOf(user));
 			databases.set(user, database);
 		}
 		return database;
 	}
 
 	const now = deps.now ?? Date.now;
-	const storePath =
-		deps.storePath ??
-		((user: string) => join(host.stores.user(user).paths.data, "knowledge.db"));
 
 	const tools = createTools({ host, dbForUser, now });
 	const target = createTarget({ host, dbForUser, now });
@@ -64,7 +62,7 @@ export default function createKnowledge(
 		}),
 		dbForUser,
 		surfaces: {
-			views: [createKnowledgeView({ host, dbForUser, storePath, now })],
+			views: [createKnowledgeView({ host, dbForUser, storePath: pathOf, now })],
 		},
 		curationTargets: [target],
 		harnessShutdown: () => {

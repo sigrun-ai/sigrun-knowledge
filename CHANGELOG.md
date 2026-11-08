@@ -13,7 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Read-only Knowledge view: type hierarchy, searchable entities, entity details
   and history, inquiries, conversation links, and an archived-type/inquiry
-  toggle. Views are scoped to the calling principal and never create a store.
+  toggle. Type pages identify and describe the selected type, inquiry details
+  include dates, archived types are badged, and the search box retains the
+  applied query. Views are scoped to the calling principal and never create a
+  store.
 
 ### Changed
 

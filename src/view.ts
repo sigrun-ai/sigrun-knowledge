@@ -32,8 +32,6 @@ export interface KnowledgeViewDeps {
 	readonly dbForUser: (user: string) => KnowledgeDb;
 	readonly storePath: (user: string) => string;
 	readonly now: () => number;
-	/** Test seam for in-memory stores; production checks storePath on disk. */
-	readonly storeExists?: (user: string) => boolean;
 }
 
 interface KnowledgeParams {
@@ -47,6 +45,7 @@ interface KnowledgeParams {
 
 interface KnowledgeData {
 	readonly types: readonly TypeNode[];
+	readonly selectedType?: TypeNode;
 	readonly entities: ReturnType<typeof entitiesOfType>;
 	readonly entity?: EntityDetail;
 	readonly typeFields?: readonly { label: string; value: string }[];
@@ -99,18 +98,21 @@ export function createKnowledgeView(deps: KnowledgeViewDeps): SurfaceDef<"view">
 		const user = ctx.principal.user;
 		if (user === undefined) return { data: emptyData(paramsOf(ctx)), access: "none" };
 		const params = paramsOf(ctx);
-		if (!(deps.storeExists ?? ((who) => existsSync(deps.storePath(who))))(user)) {
+		if (!existsSync(deps.storePath(user))) {
 			return { data: emptyData(params), access: "write" };
 		}
 		const db = deps.dbForUser(user).raw();
 		const entity = params.entity === undefined ? undefined : entityDetail(db, params.entity, deps.now());
 		const inquiryRows = inquiries(db, { includeArchived: params.archived === true });
+		const types = typeTree(db, { includeArchived: params.archived === true });
+		const selectedType = params.type === undefined ? undefined : findType(types, params.type);
 		return {
 			// "write" permits the edit-shaped drill-in dispatches; handlers
 			// only navigate and the data layer remains strictly read-only.
 			access: "write",
 			data: {
-				types: typeTree(db, { includeArchived: params.archived === true }),
+				types,
+				...(selectedType === undefined ? {} : { selectedType }),
 				entities:
 					params.type === undefined
 						? []
@@ -217,6 +219,15 @@ function emptyData(params: KnowledgeParams): KnowledgeData {
 	return { types: [], entities: [], inquiries: [], params };
 }
 
+function findType(nodes: readonly TypeNode[], id: number): TypeNode | undefined {
+	for (const node of nodes) {
+		if (node.id === id) return node;
+		const found = findType(node.children, id);
+		if (found !== undefined) return found;
+	}
+	return undefined;
+}
+
 function flattenTypes(nodes: readonly TypeNode[], depth = 0): Record<string, unknown>[] {
 	return nodes.flatMap((node) => [
 		{
@@ -241,7 +252,11 @@ function viewTree(data: KnowledgeData, access: "write" | "none"): Tree {
 				{ id: "inquiries", title: "Inquiries" },
 			],
 			onActivate: { type: "edit", name: "openType" },
-			item: { title: { $: "./title" }, meta: [{ text: { $: "./meta" } }] },
+			item: {
+				title: { $: "./title" },
+				meta: [{ text: { $: "./meta" } }],
+				badges: [{ text: { $: "./archived" }, tone: "neutral" }],
+			},
 		},
 	];
 	const main: Record<string, unknown>[] = [];
@@ -288,7 +303,16 @@ function withoutArchived(params: KnowledgeParams): KnowledgeParams {
 }
 
 function typeBlocks(data: KnowledgeData): Record<string, unknown>[] {
+	if (data.selectedType === undefined) return [{ type: "markdown", text: "Not found" }];
 	return [
+		{
+			type: "fields",
+			id: "type-summary",
+			rows: [
+				{ label: "Type", value: data.selectedType.name },
+				{ label: "Description", value: data.selectedType.description },
+			],
+		},
 		{
 			type: "fields",
 			id: "fields",
@@ -315,7 +339,7 @@ function typeBlocks(data: KnowledgeData): Record<string, unknown>[] {
 		{
 			type: "form",
 			id: "search",
-			bind: "/search",
+			bind: "/params",
 			mode: "submit",
 			onSubmit: "search",
 			submitLabel: "Search",
@@ -422,6 +446,8 @@ function inquiryBlocks(inquiry: InquiryRow | undefined): Record<string, unknown>
 				{ label: "Question", value: inquiry.question },
 				{ label: "Why", value: inquiry.why ?? "" },
 				{ label: "Outcome", value: inquiry.outcome ?? "" },
+				{ label: "Started", value: new Date(inquiry.startedAt).toISOString() },
+				{ label: "Last touched", value: new Date(inquiry.touchedAt).toISOString() },
 			],
 		},
 		{

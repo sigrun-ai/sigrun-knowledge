@@ -82,9 +82,6 @@ function fixture(): Fixture {
 		host: fake.host as unknown as SigrunHost,
 		storePath,
 		now: () => NOW,
-		// The production opener's existence check is still exercised: this
-		// marker stands for a real SQLite file while reads stay in memory.
-		storeExists: (user) => existsSync(storePath(user)),
 		dbForUser: (user) => {
 			opened.push(user);
 			return memory.openDb(storePath(user));
@@ -158,7 +155,7 @@ async function rendered(
 		placement: "view",
 		handlers: new Set(Object.keys(view.actions ?? {})),
 	});
-	expect(verdict.ok).toBe(true);
+	expect(verdict.ok ? [] : verdict.errors, "tree validator diagnostics").toEqual([]);
 	return result;
 }
 
@@ -204,7 +201,11 @@ describe("the Knowledge view", () => {
 			navigate: { type: "navigate", params: { type: place } },
 		});
 
-		const result = await rendered(view, ALICE, { type: clinic });
+		const result = await rendered(view, ALICE, { type: clinic, q: "north" });
+		expect(block(result.tree, "type-summary").rows).toEqual([
+			{ label: "Type", value: "acme clinic" },
+			{ label: "Description", value: "An Acme clinic." },
+		]);
 		expect(block(result.tree, "fields").rows).toEqual([
 			{ label: "price", value: "money · stale after 30 days" },
 		]);
@@ -220,7 +221,12 @@ describe("the Knowledge view", () => {
 				{ field: "localOnly", label: "Local only", cell: "badge" },
 			],
 		});
-		expect(block(result.tree, "search")).toMatchObject({ mode: "submit", onSubmit: "search" });
+		expect(block(result.tree, "search")).toMatchObject({
+			bind: "/params",
+			mode: "submit",
+			onSubmit: "search",
+		});
+		expect((result.data as { params: { q: string } }).params.q).toBe("north");
 		const search = await view.actions?.search(ctxOf(ALICE, { type: place }), {
 			values: { q: "north" },
 		});
@@ -228,9 +234,16 @@ describe("the Knowledge view", () => {
 			ok: true,
 			navigate: { type: "navigate", params: { type: place, q: "north" } },
 		});
+		const barePayload = await view.actions?.search(ctxOf(ALICE, { type: place, archived: true }), {
+			q: " north ",
+		});
+		expect(barePayload).toEqual({
+			ok: true,
+			navigate: { type: "navigate", params: { type: place, q: "north", archived: true } },
+		});
 	});
 
-	test("history renders created and archived rows", async () => {
+	test("history renders created, changed and archived rows", async () => {
 		const { view, db } = fixture();
 		const changed = record(db, [
 			{ type: "acme clinic", name: "North Clinic", keys: { phone: "+1 (555) 010-2000" }, fields: {} },
@@ -245,12 +258,17 @@ describe("the Knowledge view", () => {
 			] },
 			{ callId: callId(), now: NOW + DAY_MS },
 		);
+		db.raw()
+			.prepare('INSERT INTO versions (changeId, "table", rowId, before, after, at) VALUES (?, ?, ?, ?, ?, ?)')
+			.run("archive-change", "entities", entityId, JSON.stringify({ archived: 0 }), null, NOW + 2 * DAY_MS);
 		const result = await rendered(view, ALICE, { entity: entityId });
 		const history = blocks(result.tree).filter((row) => row.type === "diff");
-		expect(history).toHaveLength(2);
-		expect(history[0]?.before).not.toBe("");
-		expect(history[1]?.before).toBe("");
+		expect(history).toHaveLength(3);
+		expect(history[0]?.after).toBe("");
+		expect(history[1]?.before).not.toBe("");
+		expect(history[2]?.before).toBe("");
 		expect(JSON.stringify(block(result.tree, "history"))).toContain("created");
+		expect(JSON.stringify(block(result.tree, "history"))).toContain("archived");
 	});
 
 	test("entity detail renders fields with source, date and stale", async () => {
@@ -264,6 +282,7 @@ describe("the Knowledge view", () => {
 					type: "acme clinic",
 					name: "North Clinic",
 					keys: { phone: "+1 (555) 010-2000" },
+					attributes: { wheelchair: true },
 					role: "candidate",
 					reason: "nearby",
 					fields: {
@@ -284,6 +303,9 @@ describe("the Knowledge view", () => {
 		]);
 		expect(block(result.tree, "keys").rows).toEqual([
 			{ label: "phone (normalized)", value: "15550102000" },
+		]);
+		expect(block(result.tree, "attributes").rows).toEqual([
+			{ label: "wheelchair", value: "yes" },
 		]);
 		expect(JSON.stringify(block(result.tree, "roles"))).toContain("Which clinic?");
 		expect(JSON.stringify(block(result.tree, "roles"))).toContain("candidate");
@@ -329,6 +351,13 @@ describe("the Knowledge view", () => {
 			navigate: { type: "navigate", params: { inquiries: true, inquiry: inquiryId } },
 		});
 		const detail = await rendered(view, ALICE, { inquiries: true, inquiry: inquiryId });
+		expect(block(detail.tree, "inquiry-detail").rows).toEqual([
+			{ label: "Question", value: "Which clinic?" },
+			{ label: "Why", value: "" },
+			{ label: "Outcome", value: "" },
+			{ label: "Started", value: "2026-11-04T12:00:00.000Z" },
+			{ label: "Last touched", value: "2026-11-04T12:00:00.000Z" },
+		]);
 		const conversation = block(detail.tree, "conversation-10");
 		expect(conversation).toMatchObject({
 			actions: [{
@@ -437,10 +466,21 @@ describe("the Knowledge view", () => {
 
 		const ordinary = await rendered(view, ALICE);
 		expect(JSON.stringify(ordinary.tree)).not.toContain("acme clinic");
+		const ordinaryInquiries = await rendered(view, ALICE, { inquiries: true });
+		expect(JSON.stringify(ordinaryInquiries.tree)).not.toContain("Archived question");
+		const ordinaryEntity = await rendered(view, ALICE, { entity: entityId });
+		expect(JSON.stringify(block(ordinaryEntity.tree, "roles"))).not.toContain("Archived question");
 		const withArchived = await rendered(view, ALICE, { archived: true });
 		expect(JSON.stringify(withArchived.tree)).toContain("acme clinic");
+		expect(items(withArchived.tree, "types").find((row) => row.id === `type:${typeId(db, "acme clinic")}`)).toMatchObject({
+			archived: "archived",
+		});
+		expect(block(withArchived.tree, "types").item).toMatchObject({
+			badges: [{ text: { $: "./archived" }, tone: "neutral" }],
+		});
 		const archivedInquiries = await rendered(view, ALICE, { inquiries: true, archived: true });
 		expect(JSON.stringify(archivedInquiries.tree)).toContain("Archived question");
+		expect(items(archivedInquiries.tree, "inquiries")[0]).toMatchObject({ archived: "archived" });
 		const page = await rendered(view, ALICE, { type: typeId(db, "acme clinic"), archived: true });
 		expect(items(page.tree, "entities").map((row) => row.id)).toContain(`entity:${entityId}`);
 		const action = await view.actions?.openType(ctxOf(ALICE, { archived: true }), { itemId: "inquiries" });
