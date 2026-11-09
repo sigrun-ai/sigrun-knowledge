@@ -1,6 +1,6 @@
 {
 	"name": "@sigrun/knowledge",
-	"version": "0.1.3",
+	"version": "0.1.4",
 	"description": "Curated per-user knowledge extension for sigrun (pi-durable)",
 	"type": "module",
 	"engines": {
