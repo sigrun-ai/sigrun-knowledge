@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { matchesGlob, resolveUserSettings } from "./config.js";
+import { matchesGlob } from "./glob.js";
 import { toolExecuted } from "./tool-executed.js";
 /** The window a queued review suppresses duplicate requests. */
 export const RESEARCH_WINDOW_MS = 15 * 60 * 1000;
@@ -36,9 +36,7 @@ export function createResearch(deps) {
             const meta = await deps.conversationMeta(api.conversationId);
             if (meta.internal === true || meta.owner === undefined)
                 return undefined;
-            const settings = await resolveUserSettings({
-                get: () => deps.userSettings(meta.owner),
-            });
+            const settings = await deps.userSettings(meta.owner);
             if (!settings.researchTools.some((glob) => matchesGlob(glob, call.name))) {
                 return undefined;
             }

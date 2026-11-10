@@ -3,7 +3,8 @@ import { join } from "node:path";
 
 import type { ToolHookCall, ToolExecutionResult } from "@earendil-works/pi-durable";
 
-import { matchesGlob, resolveUserSettings } from "./config.js";
+import { matchesGlob } from "./glob.js";
+import type { KnowledgeUserSettings } from "./settings-schema.js";
 import { toolExecuted } from "./tool-executed.js";
 
 /**
@@ -48,8 +49,8 @@ export interface ResearchDeps {
 	): Promise<{ owner?: string; internal?: true }>;
 	/** The directory user's state dir (research.json lives there). */
 	userStateDir(user: string): string;
-	/** The extension's per-user settings (researchTools). */
-	userSettings(user: string): Promise<Record<string, unknown>>;
+	/** The extension's checked per-user settings (researchTools). */
+	userSettings(user: string): Promise<KnowledgeUserSettings>;
 	now(): number;
 }
 
@@ -73,9 +74,7 @@ export function createResearch(deps: ResearchDeps) {
 		try {
 			const meta = await deps.conversationMeta(api.conversationId);
 			if (meta.internal === true || meta.owner === undefined) return undefined;
-			const settings = await resolveUserSettings({
-				get: () => deps.userSettings(meta.owner as string),
-			});
+			const settings = await deps.userSettings(meta.owner as string);
 			if (!settings.researchTools.some((glob) => matchesGlob(glob, call.name))) {
 				return undefined;
 			}

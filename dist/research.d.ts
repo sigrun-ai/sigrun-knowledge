@@ -1,4 +1,5 @@
 import type { ToolHookCall, ToolExecutionResult } from "@earendil-works/pi-durable";
+import type { KnowledgeUserSettings } from "./settings-schema.js";
 /**
  * The per-conversation "researched since last review" flag, per user:
  * `<user state>/research.json` maps conversationId (string key) to
@@ -21,8 +22,8 @@ export interface ResearchDeps {
     }>;
     /** The directory user's state dir (research.json lives there). */
     userStateDir(user: string): string;
-    /** The extension's per-user settings (researchTools). */
-    userSettings(user: string): Promise<Record<string, unknown>>;
+    /** The extension's checked per-user settings (researchTools). */
+    userSettings(user: string): Promise<KnowledgeUserSettings>;
     now(): number;
 }
 /**

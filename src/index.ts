@@ -8,6 +8,8 @@ import { createTools } from "./tools.js";
 import { createTarget } from "./target.js";
 import { createResearch } from "./research.js";
 import { createKnowledgeView } from "./view.js";
+import { KNOWLEDGE_USER_SCHEMA } from "./settings-schema.js";
+import type { KnowledgeSettings, KnowledgeUserSettings } from "./settings-schema.js";
 
 export interface FactoryDeps {
 	openDb?: (path: string) => KnowledgeDb;
@@ -23,6 +25,10 @@ export default function createKnowledge(
 	host: SigrunHost,
 	deps: FactoryDeps = {},
 ): SigrunExtensionResult {
+	const settings = host.settings.declare<KnowledgeSettings, KnowledgeUserSettings>({
+		schema: { type: "object", properties: {} },
+		userSchema: KNOWLEDGE_USER_SCHEMA,
+	});
 	// One store per directory user, opened on first use. Core does not
 	// create paths.data; KnowledgeDb.open creates its parent.
 	const databases = new Map<string, KnowledgeDb>();
@@ -45,7 +51,7 @@ export default function createKnowledge(
 	const researchFlag = createResearch({
 		conversationMeta: (id) => host.conversations.meta(id as never),
 		userStateDir: (user) => host.stores.user(user).paths.state,
-		userSettings: (user) => host.stores.user(user).settings.get(),
+		userSettings: (user) => settings.user(user).get(),
 		now,
 	});
 

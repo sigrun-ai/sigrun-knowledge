@@ -87,7 +87,16 @@ const DEV_PIN_OVERRIDES = {
 };
 const peers = manifest.peerDependencies ?? {};
 const devDeps = manifest.devDependencies ?? {};
+check(
+	peers["@sigrun/sigrun"] === ">=0.13.0",
+	'package.json: peerDependencies["@sigrun/sigrun"] must be ">=0.13.0"',
+);
+check(
+	devDeps["@sigrun/sigrun"] === "file:../sigrun",
+	'package.json: devDependencies["@sigrun/sigrun"] must be "file:../sigrun"',
+);
 for (const [module, spec] of Object.entries(peers)) {
+	if (module === "@sigrun/sigrun") continue;
 	check(
 		module in HOST_MODULE_PINS,
 		`package.json: peerDependencies carries non-host module "${module}"`,

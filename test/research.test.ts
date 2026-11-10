@@ -26,8 +26,7 @@ describe("research flag", () => {
 		return {
 			conversationMeta: (id: number) => fake.host.conversations.meta(id),
 			userStateDir: (user: string) => fake.host.stores.user(user).paths.state,
-			userSettings: (user: string) =>
-				fake.host.stores.user(user).settings.get(),
+			userSettings: fake.userSettings,
 			now,
 		};
 	}
@@ -79,7 +78,7 @@ describe("research flag", () => {
 		const throwing = createResearch({
 			conversationMeta: () => Promise.reject(new Error("boom")),
 			userStateDir: (user: string) => join(tmpdir(), "research-never", user),
-			userSettings: () => Promise.resolve({}),
+			userSettings: () => Promise.resolve({ researchTools: ["*/search*"] }),
 			now: () => NOW,
 		});
 		await expect(

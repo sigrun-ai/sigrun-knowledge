@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Declare per-user `researchTools` settings as JSON Schema through `host.settings.declare`, with defaults and malformed-value fallback now handled by core. Requires sigrun 0.13.0 or newer.
+
 ## [0.1.4] - 2026-11-08
 
 - CI: test against the latest released core (core-ref: release). No code change.
