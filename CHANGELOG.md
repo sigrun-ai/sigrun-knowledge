@@ -16,8 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - CI: test against the latest released core (core-ref: release). No code change.
 
-## [0.1.2] - 2026-11-07
-
 ## [0.1.3] - 2026-11-07
 
 ### Added
