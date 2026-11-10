@@ -97,6 +97,22 @@ describe("knowledge user settings schema", () => {
 		});
 	});
 
+	test("malformed researchTools items are dropped per element", async () => {
+		const host = await declaredHost();
+		await host.save("alice", { researchTools: ["", "web_search"] });
+		expect(await host.declared!.user("alice").get()).toEqual({
+			researchTools: ["web_search"],
+		});
+	});
+
+	test("a non-array researchTools value falls back to the old defaults", async () => {
+		const host = await declaredHost();
+		await host.save("alice", { researchTools: "web_search" });
+		expect(await host.declared!.user("alice").get()).toEqual({
+			researchTools: ["*/search*", "*/fetch*", "*/crawl*", "*/md", "web_search", "web_fetch"],
+		});
+	});
+
 	test("user settings stay per user", async () => {
 		const host = await declaredHost();
 		await writeFile(

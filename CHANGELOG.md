@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Declare per-user `researchTools` settings as JSON Schema through `host.settings.declare`, with defaults and malformed-value fallback now handled by core. Requires sigrun 0.13.0 or newer.
+- Malformed `researchTools` entries are now dropped individually while valid entries are retained; a non-array value still falls back to the full default list.
 
 ## [0.1.4] - 2026-11-08
 
