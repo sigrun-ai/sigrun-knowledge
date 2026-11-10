@@ -19,8 +19,7 @@ describe("research afterTool on a harness-written result", () => {
 		const flag = createResearch({
 			conversationMeta: (id: number) => fake.host.conversations.meta(id),
 			userStateDir: (user: string) => fake.host.stores.user(user).paths.state,
-			userSettings: (user: string) =>
-				fake.host.stores.user(user).settings.get(),
+			userSettings: fake.userSettings,
 			now: () => NOW,
 		});
 		const call = { name: "searxng/search", arguments: {} };
@@ -49,8 +48,7 @@ describe("research afterTool on a harness-written result", () => {
 		const flag = createResearch({
 			conversationMeta: (id: number) => fake.host.conversations.meta(id),
 			userStateDir: (user: string) => fake.host.stores.user(user).paths.state,
-			userSettings: (user: string) =>
-				fake.host.stores.user(user).settings.get(),
+			userSettings: fake.userSettings,
 			now: () => NOW,
 		});
 		await flag(

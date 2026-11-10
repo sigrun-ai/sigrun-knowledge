@@ -5,11 +5,16 @@ import { createTools } from "./tools.js";
 import { createTarget } from "./target.js";
 import { createResearch } from "./research.js";
 import { createKnowledgeView } from "./view.js";
+import { KNOWLEDGE_USER_SCHEMA } from "./settings-schema.js";
 /**
  * The loader injects the host only when factory.length > 0: keep the host
  * bare and the optional test dependencies second, so the arity stays one.
  */
 export default function createKnowledge(host, deps = {}) {
+    const settings = host.settings.declare({
+        schema: { type: "object", properties: {} },
+        userSchema: KNOWLEDGE_USER_SCHEMA,
+    });
     // One store per directory user, opened on first use. Core does not
     // create paths.data; KnowledgeDb.open creates its parent.
     const databases = new Map();
@@ -29,7 +34,7 @@ export default function createKnowledge(host, deps = {}) {
     const researchFlag = createResearch({
         conversationMeta: (id) => host.conversations.meta(id),
         userStateDir: (user) => host.stores.user(user).paths.state,
-        userSettings: (user) => host.stores.user(user).settings.get(),
+        userSettings: (user) => settings.user(user).get(),
         now,
     });
     const result = {

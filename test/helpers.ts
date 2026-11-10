@@ -2,7 +2,11 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { checkStoredSettings } from "@sigrun/sigrun/settings-schema";
+
 import { KnowledgeDb } from "../src/db.js";
+import { KNOWLEDGE_USER_SCHEMA } from "../src/settings-schema.js";
+import type { KnowledgeUserSettings } from "../src/settings-schema.js";
 
 export interface HookCallRecord {
 	name: string;
@@ -53,6 +57,7 @@ export interface FakeHostOptions {
 	entryPages?: Record<number, number[][]>;
 	/** Per-user settings.json contents. */
 	settings?: Record<string, Record<string, unknown>>;
+
 	/** Scripted hook results keyed by hook name (one result or a fn). */
 	hooks?: Record<
 		string,
@@ -64,11 +69,15 @@ export interface Fake {
 	host: FakeHost;
 	calls: HookCallRecord[];
 	dir: string;
+	userSettings(user: string): Promise<KnowledgeUserSettings>;
 }
 
 export function fakeHost(options: FakeHostOptions = {}): Fake {
 	const dir = mkdtempSync(join(tmpdir(), "knowledge-fake-"));
 	const calls: HookCallRecord[] = [];
+	const userSettings = async (user: string): Promise<KnowledgeUserSettings> =>
+		checkStoredSettings(KNOWLEDGE_USER_SCHEMA, options.settings?.[user] ?? {})
+			.value as KnowledgeUserSettings;
 	const host: FakeHost = {
 		stores: {
 			user: (user: string) => ({
@@ -117,7 +126,7 @@ export function fakeHost(options: FakeHostOptions = {}): Fake {
 			},
 		},
 	};
-	return { host, calls, dir };
+	return { host, calls, dir, userSettings };
 }
 
 /** Scripted `recall.index` ok result. */

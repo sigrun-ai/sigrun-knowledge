@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { checkStoredSettings } from "@sigrun/sigrun/settings-schema";
+import type { SettingsDeclaration } from "@sigrun/sigrun/extension";
 
 import createKnowledge from "../src/index.js";
 import { KnowledgeDb } from "../src/db.js";
@@ -12,6 +14,14 @@ interface FakeHostStores {
 
 const fakeHost = (root: string) =>
 	({
+		settings: {
+			declare: (declaration: SettingsDeclaration) => ({
+				get: async () => ({}),
+				user: (_user: string) => ({
+					get: async () => checkStoredSettings(declaration.userSchema!, {}).value,
+				}),
+			}),
+		},
 		stores: {
 			user: (user: string) => ({
 				paths: {
