@@ -38,6 +38,7 @@ export default function createKnowledge(host, deps = {}) {
         now,
     });
     const result = {
+        title: "Knowledge",
         extension: defineExtension({
             name: "@sigrun/knowledge",
             tools,
