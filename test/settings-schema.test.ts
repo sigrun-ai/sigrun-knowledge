@@ -11,6 +11,7 @@ import { KNOWLEDGE_USER_SCHEMA } from "../src/settings-schema.js";
 interface DeclaredHost {
 	declaration: SettingsDeclaration | undefined;
 	declared: ReturnType<SigrunHost["settings"]["declare"]> | undefined;
+	result: ReturnType<typeof createKnowledge> | undefined;
 	settingsDir: string;
 	save(user: string, value: Record<string, unknown>): Promise<void>;
 }
@@ -28,6 +29,7 @@ async function declaredHost(): Promise<DeclaredHost> {
 	const state = {
 		declaration: undefined,
 		declared: undefined,
+		result: undefined,
 		settingsDir,
 	} as DeclaredHost;
 	const read = async (user: string): Promise<Record<string, unknown>> => {
@@ -68,7 +70,7 @@ async function declaredHost(): Promise<DeclaredHost> {
 			}),
 		},
 	} as unknown as SigrunHost;
-	createKnowledge(host);
+	state.result = createKnowledge(host);
 	state.save = (user, value) => host.stores.user(user).settings.set(value);
 	return state;
 }
@@ -76,6 +78,11 @@ async function declaredHost(): Promise<DeclaredHost> {
 describe("knowledge user settings schema", () => {
 	test("schema is drawable", () => {
 		assertDrawable(KNOWLEDGE_USER_SCHEMA);
+	});
+
+	test("factory declares its title", async () => {
+		const host = await declaredHost();
+		expect(host.result!.title).toBe("Knowledge");
 	});
 
 	test("defaults match the old parser", async () => {

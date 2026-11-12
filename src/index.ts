@@ -56,6 +56,7 @@ export default function createKnowledge(
 	});
 
 	const result: SigrunExtensionResult & { dbForUser: typeof dbForUser } = {
+		title: "Knowledge",
 		extension: defineExtension({
 			name: "@sigrun/knowledge",
 			tools,
