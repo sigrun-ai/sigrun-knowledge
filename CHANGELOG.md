@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-11-15
+
+- The shared peer gains the 0.19.1 line and the core floor rises to
+  >=0.19.1 (the 0.19.0 tag was cut against an uncommitted tree and never
+  published). The test fake-host carries the 0.18.x DeclaredSettings
+  contract (`effective`). No runtime change.
+
 ## [0.1.6] - 2026-11-12
 
 ### Added
