@@ -48,6 +48,7 @@ async function declaredHost(): Promise<DeclaredHost> {
 					user: (user: string) => ({
 						get: async () => checkStoredSettings(declaration.userSchema!, await read(user)).value as U,
 					}),
+					effective: async () => ({}) as S,
 				};
 				state.declared = declared;
 				return declared;
