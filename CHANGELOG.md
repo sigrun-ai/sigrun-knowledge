@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-11-17
+
+- The `@sigrun/shared` peer becomes an open floor (`>=0.5.0`) instead of a
+  version-line chain (decisions C5); 0.5.0 is the first published line that
+  carries the runtime value import (`accessOf`) and the `blocks` types this
+  extension uses. `check-manifest` enforces the same floor. No runtime change.
+
 ## [0.1.7] - 2026-11-15
 
 - The shared peer gains the 0.19.1 line and the core floor rises to
@@ -19,16 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The factory result declares the display title `Knowledge` (the extensions
   list and settings page show it).
 - The @sigrun/shared peer gains the 0.16.0 line (companion to core 0.16.0).
-
-## [Unreleased]
-
-### Changed
-
-- Display title `Knowledge` on the factory result (core 0.15.0). Peer floor `@sigrun/sigrun >=0.15.0`.
-- The `@sigrun/shared` peer becomes an open floor (`>=0.5.0`) instead of a
-  version-line chain (decisions C5); 0.5.0 is the first published line that
-  carries the runtime value import (`accessOf`) and the `blocks` types this
-  extension uses. `check-manifest` enforces the same floor. No runtime change.
 
 ## [0.1.5] - 2026-11-10
 
